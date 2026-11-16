@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createPrivateKey} from 'node:crypto';
+import {generateMasqueKeys,validateCrypto,normalizeUsqueConfig,makeXrayFull,makeXrayOutbound,isIP,buildUsqueFromApi} from '../public/lib.mjs';
+const pin='MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEIaU7MToJm9NKp8YfGxR6r+/h4mcG7SxI8tsW8OR1A5tv/zCzVbCRRh2t87/kxnP6lAy0lkr7qYwu+ox+k3dr6w==';
+async function fixture(){return {private_key:(await generateMasqueKeys()).privateKey,endpoint_v4:'162.159.198.1',endpoint_v6:'2606:4700:103::1',endpoint_pub_key:pin,ipv4:'172.16.0.2',ipv6:'2606:4700:110::1',access_token:'secret-management-token',license:'secret-license'};}
+test('SEC1/PKCS8、CIDR 兼容与密码学校验',async()=>{const c=await fixture();await validateCrypto(c);c.private_key=createPrivateKey({key:Buffer.from(c.private_key,'base64'),format:'der',type:'sec1'}).export({format:'pem',type:'pkcs8'}).toString();c.ipv4+='/32';c.ipv6+='/128';await validateCrypto(c);assert.equal(normalizeUsqueConfig(c).ipv4,'172.16.0.2');assert.equal(makeXrayOutbound(c).streamSettings.masqueSettings.warp.address[0],'172.16.0.2/32');});
+test('拒绝无效 IPv6、DNS 和本地端口，IPv6 缺少 H2 端点时报错',async()=>{const c=await fixture();assert.equal(isIP('1:2:3'),false);assert.equal(isIP('::::'),false);assert.equal(isIP('2606:4700:103::2'),true);assert.throws(()=>makeXrayOutbound(c,{family:'v6',mode:'h2'}),/IPv6/);assert.throws(()=>makeXrayOutbound(c,{dns:'example.com'}),/DNS/);assert.throws(()=>makeXrayFull(c,{localPort:65535}),/端口/);});
+test('导出不含账号令牌和许可证，局域网直连不依赖 geoip 文件',async()=>{const c=await fixture();const full=makeXrayFull(c,{localPort:11080,route:'lan-direct'});assert.equal(full.inbounds[1].port,11081);assert.ok(full.routing.rules[0].ip.includes('192.168.0.0/16'));const text=JSON.stringify(full);assert.ok(!text.includes(c.access_token));assert.ok(!text.includes(c.license));assert.ok(!text.includes('geoip:'));});
+test('拒绝未启用 WARP 的登记结果',async()=>{assert.throws(()=>buildUsqueFromApi({}, {warp_enabled:false},{}),/尚未启用/);});

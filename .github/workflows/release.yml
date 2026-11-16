@@ -1,0 +1,54 @@
+name: Release binaries
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag
+        required: true
+        default: v0.2.0
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: go test -race ./...
+      - run: node --test tests/*.test.mjs
+      - name: Build both Linux architectures
+        run: |
+          mkdir -p bin dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o bin/warp-web-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o bin/warp-web-linux-arm64 .
+          cp bin/* dist/
+      - name: Package full distribution
+        run: |
+          python3 - <<'PY'
+          import os, subprocess, zipfile, hashlib
+          from pathlib import Path
+          tag=os.environ['RELEASE_TAG']
+          name='warp-masque-web-'+tag+'-complete.zip'
+          files=subprocess.check_output(['git','ls-files','-z']).decode().split('\0')
+          with zipfile.ZipFile('dist/'+name,'w',zipfile.ZIP_DEFLATED) as z:
+              for f in files:
+                  if f: z.write(f,'warp-masque-web/'+f)
+              for f in Path('bin').iterdir(): z.write(f,'warp-masque-web/'+str(f))
+          paths=sorted(Path('dist').iterdir())
+          Path('dist/SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in paths))
+          PY
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" dist/* --clobber

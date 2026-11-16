@@ -1,0 +1,7 @@
+.env
+usque-config*.json
+warp-xray*.json
+warp-web
+artifacts/
+
+bin/
