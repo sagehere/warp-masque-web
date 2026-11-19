@@ -1,0 +1,7 @@
+services:
+  warp-web:
+    environment:
+      TLS_CERT_FILE: /run/warp-tls/fullchain.pem
+      TLS_KEY_FILE: /run/warp-tls/privkey.pem
+    volumes:
+      - ./tls:/run/warp-tls:ro

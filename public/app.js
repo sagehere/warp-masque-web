@@ -92,14 +92,14 @@ function showRegistrationAccess(authorized, enabled = true) {
 
 async function authorize(event) {
   event.preventDefault();
-  if (authorizing) return;
+  if (authorizing || !window.isSecureContext) return;
   authorizing = true;
   $('loginBtn').disabled = true;
   try {
     await apiRequest('/api/session', {}, $('accessCode').value);
     $('accessCode').value = '';
     const health = await checkBackend();
-    if (!health?.authorized) throw Error('会话未建立，请通过 HTTPS 域名或 localhost 访问。');
+    if (!health?.authorized) throw Error('会话未建立，请通过 HTTPS 或 localhost 访问。');
     $('statusMessage').hidden = true;
     $('licenseInput').focus();
   } catch (error) {
@@ -325,6 +325,14 @@ async function checkBackend() {
     if (!res.ok) throw Error();
     const data = await res.json();
     if (!data.ok) throw Error();
+    const secure = window.isSecureContext;
+    $('httpsNotice').hidden = secure || !data.registrationEnabled;
+    if (!secure && data.registrationEnabled) {
+      el.textContent = '生成配置需要 HTTPS';
+      el.className = 'online error';
+      showRegistrationAccess(false, false);
+      return data;
+    }
     el.textContent = data.registrationEnabled ? '注册服务已就绪' : '后端缺少访问口令';
     el.className = 'online ' + (data.registrationEnabled ? 'good' : 'error');
     showRegistrationAccess(data.authorized, data.registrationEnabled);

@@ -345,6 +345,14 @@ func main() {
 	}
 	s := &service{token: os.Getenv("REGISTRATION_TOKEN"), upstream: upstreamAPI, client: &http.Client{Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, cooldown: 60 * time.Second}
 	server := &http.Server{Addr: addr, Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+	certFile, keyFile := os.Getenv("TLS_CERT_FILE"), os.Getenv("TLS_KEY_FILE")
+	if (certFile == "") != (keyFile == "") {
+		log.Fatal("TLS_CERT_FILE and TLS_KEY_FILE must be configured together")
+	}
+	if certFile != "" {
+		log.Printf("WARP MASQUE Web v0.3.0: https://%s", addr)
+		log.Fatal(server.ListenAndServeTLS(certFile, keyFile))
+	}
 	log.Printf("WARP MASQUE Web v0.3.0: http://%s", addr)
 	log.Fatal(server.ListenAndServe())
 }

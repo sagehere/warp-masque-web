@@ -46,7 +46,7 @@ go run .
 Compose 从 GitHub Container Registry 拉取 `ghcr.io/sagehere/warp-masque-web:latest`。镜像支持 Linux amd64 和 arm64。
 
 1. 将 `compose.yml` 和 `.env.example` 放到 VPS 的 Dockge Stack 目录，例如 `/opt/stacks/warp-masque-web`。
-2. 首次部署时，把 `.env.example` 复制为 `.env`，将 `REGISTRATION_TOKEN` 设置为随机长口令。可用 `openssl rand -hex 24` 生成。宿主机默认监听 `127.0.0.1:9000`。
+2. 首次部署时，把 `.env.example` 复制为 `.env`，将 `REGISTRATION_TOKEN` 设置为随机长口令。可用 `openssl rand -hex 24` 生成。宿主机默认监听 `0.0.0.0:9000`。仅供本机反代时，可将 `BIND_IP` 设置为 `127.0.0.1`。
 3. 在 Dockge 扫描并启动该 Stack，或在 Stack 目录执行：
 
 ```bash
@@ -69,6 +69,22 @@ warp.example.com {
 从源码构建的 Stack 迁移时，将原 `build: .` 替换为新版 Compose 中的 `image` 和 `pull_policy`，并保留 `.env` 和已有的反代网络配置。如要切换到 9000，需同时将已有 `.env` 的 `PORT` 改为 `9000`。宿主机反代使用新端口，共享 Docker 网络的反代继续使用容器端口 8080。
 
 更新镜像时，在 Dockge 重新部署，或再次执行 `docker compose up -d`，Compose 会检查并拉取最新的 `latest` 镜像。
+
+## 通过 IP 和端口直连
+
+1. 在已有 Stack 的 `.env` 中设置 `BIND_IP=0.0.0.0`。保留需要的 `PORT`，下例采用 `8003`。在 VPS 的云安全组和防火墙中允许访问 TCP 8003。
+2. 使用主 Compose 启动后，可通过 `http://公网IP:8003/api/health` 确认端口可达。通过公网 IP 生成配置需要可信的 HTTPS 证书，因为浏览器在公共 HTTP 页面上不启用 Web Crypto 和安全会话。
+3. 准备一份包含该公网 IP 的、浏览器信任的 TLS 证书。可以使用支持 IP 证书的签发服务，例如 [Let's Encrypt 与 Certbot](https://letsencrypt.org/2026/03/11/shorter-certs-certbot)。签发时应通过服务商要求的挑战验证公网 IP。下面的目录和权限使容器内的 UID 10001 可以读取私钥。
+4. 在 Stack 目录安装证书，并使用附带的 HTTPS 配置。把示例源路径替换为实际证书路径。
+
+```bash
+sudo install -d -m 0750 -o 10001 tls
+sudo install -m 0644 /你的证书目录/fullchain.pem tls/fullchain.pem
+sudo install -m 0600 -o 10001 /你的证书目录/privkey.pem tls/privkey.pem
+docker compose -f compose.yml -f compose.ip-https.yml up -d
+```
+
+然后访问 `https://公网IP:8003`。在 Dockge 只维护一个 Compose 文件时，可将 `compose.ip-https.yml` 里的两个 TLS 环境变量和 `volumes` 项合入现有 `warp-web` 服务，再点击重新部署。续签后，重新安装证书文件并重启容器，使服务读取新证书。
 
 ## v2rayN 导入
 

@@ -35,6 +35,7 @@
           <button class="tab" id="tabImport" type="button" role="tab" aria-selected="false">导入 usque 配置</button>
         </div>
         <div class="pane" id="registerPane" role="tabpanel" aria-labelledby="tabRegister">
+          <p id="httpsNotice" hidden>当前通过 HTTP 打开。请使用此服务器的 HTTPS 地址访问，以解锁并生成配置。</p>
           <form id="loginForm" class="access-form" hidden>
             <label class="field">网页访问口令 <input type="password" id="accessCode" maxlength="256" autocomplete="off" spellcheck="false" required></label>
             <button class="secondary" id="loginBtn" type="submit">解锁生成</button>
