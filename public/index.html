@@ -18,31 +18,47 @@
         <span class="brand-logo" aria-hidden="true">W</span>
         <span>WARP <strong>MASQUE</strong> <small>WEB</small></span>
       </a>
-      <div class="topright"><span class="version">v0.2.0</span><span class="online" id="apiStatus">正在检查服务</span></div>
+      <div class="topright"><span class="version">v0.3.0</span><span class="online" id="apiStatus">正在检查服务</span></div>
     </header>
 
     <main>
       <section class="hero">
         <div class="eyebrow"><span class="ping"></span> Cloudflare WARP · MASQUE / CONNECT-IP</div>
-        <h1>从网页生成配置，<br><span class="gradient-text">让 v2rayN 直连 WARP。</span></h1>
-        <p>在浏览器完成个人 WARP 设备注册、导入已有 usque 账户，直接生成 v2rayN 使用的 Xray 配置。无需安装注册工具，也无需自建 VPN 服务器。</p>
-        <div class="platforms"><span>Windows</span><span>macOS</span><span>Linux</span><span>Android</span><span>iOS / iPadOS</span></div>
+        <h1>用 WARP+ 密钥生成<br><span class="gradient-text">MASQUE 配置</span></h1>
+        <p>粘贴许可证，下载可导入 v2rayN 的 Xray JSON。设备私钥在浏览器中生成。</p>
       </section>
 
-      <div class="section-head"><div><span class="section-index">01</span><h2>准备你的设备凭据</h2></div><span class="section-help">只有注册操作需要连接后端</span></div>
+      <div class="section-head"><div><h2>准备你的设备凭据</h2></div><span class="section-help">只有注册操作需要连接后端</span></div>
       <section class="workspace">
         <div class="tabs" role="tablist" aria-label="创建方式">
-          <button class="tab active" id="tabRegister" type="button" role="tab" aria-selected="true">新设备注册</button>
+          <button class="tab active" id="tabRegister" type="button" role="tab" aria-selected="true">WARP+ 密钥</button>
           <button class="tab" id="tabImport" type="button" role="tab" aria-selected="false">导入 usque 配置</button>
         </div>
         <div class="pane" id="registerPane" role="tabpanel" aria-labelledby="tabRegister">
-          <div class="pane-title"><div class="circle-icon">✧</div><div><h3>安全生成 WARP MASQUE 设备</h3><p>通过 WebCrypto 在本地生成 P-256 密钥，服务端仅转发设备注册与公钥登记请求。</p></div></div>
-          <div class="two-fields">
-            <label class="field">设备名称 <input type="text" id="deviceName" maxlength="50" value="Web-MASQUE" autocomplete="off" spellcheck="false"></label>
-            <label class="field">网页注册口令 <input type="password" id="accessCode" placeholder="服务端设置的 REGISTRATION_TOKEN" maxlength="256" autocomplete="off" spellcheck="false"></label>
+          <form id="loginForm" class="access-form" hidden>
+            <label class="field">网页访问口令 <input type="password" id="accessCode" maxlength="256" autocomplete="off" spellcheck="false" required></label>
+            <button class="secondary" id="loginBtn" type="submit">解锁生成</button>
+          </form>
+          <div id="licenseFlow" hidden>
+            <label class="field">WARP+ 许可密钥
+              <textarea id="licenseInput" rows="2" maxlength="16000" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="xxxxxxxx-xxxxxxxx-xxxxxxxx"></textarea>
+            </label>
+            <label class="field field-spaced" id="licenseChoiceField" hidden>检测到多条密钥，请选择一条
+              <select id="licenseChoice"></select>
+            </label>
+            <div class="action-row">
+              <button type="button" class="primary" id="registerBtn">生成配置</button>
+            </div>
+            <p class="hint consent-line">点击生成即表示你接受 <a href="https://www.cloudflare.com/website-terms/" target="_blank" rel="noopener noreferrer">Cloudflare 服务条款</a>，并同意创建一台 WARP 设备。</p>
+            <details class="advanced">
+              <summary>注册免费 WARP 设备</summary>
+              <div class="field-stack">
+                <label class="field">设备名称 <input type="text" id="deviceName" maxlength="50" value="Web-MASQUE" autocomplete="off" spellcheck="false"></label>
+                <label class="consent"><input type="checkbox" id="tosCheck"><span>我同意按上方条款注册免费 WARP 设备。</span></label>
+                <button type="button" class="secondary" id="freeRegisterBtn">生成免费 WARP 配置</button>
+              </div>
+            </details>
           </div>
-          <label class="consent"><input type="checkbox" id="tosCheck"><span>我已阅读并接受 <a href="https://www.cloudflare.com/website-terms/" target="_blank" rel="noopener noreferrer">Cloudflare 服务条款</a>，同意创建个人 WARP 设备账户。</span></label>
-          <div class="action-row"><button type="button" class="primary" id="registerBtn">生成并注册设备 <span aria-hidden="true">↗</span></button><span class="hint">访问口令不会写入浏览器存储</span></div>
           <div class="steps" id="registrationSteps" hidden aria-live="polite"></div>
         </div>
         <div class="pane" id="importPane" role="tabpanel" aria-labelledby="tabImport" hidden>
@@ -55,15 +71,19 @@
       <div id="statusMessage" class="status-message" role="status" aria-live="polite" hidden></div>
 
       <section id="resultSection" hidden>
-        <div class="section-head"><div><span class="section-index">02</span><h2>你的 WARP 设备</h2></div><button type="button" class="text-button danger" id="clearBtn">清除当前凭据</button></div>
+        <div class="section-head"><div><h2>你的 WARP 设备</h2></div><button type="button" class="text-button danger" id="clearBtn">清除当前凭据</button></div>
         <div class="device-card">
           <div class="device-icon">✓</div>
-          <div class="device-main"><strong>设备配置已载入</strong><span id="deviceId">设备 ID：—</span></div>
+          <div class="device-main"><strong id="deviceStatus">设备配置已载入</strong><span id="deviceId">设备 ID：—</span></div>
           <div class="device-ips"><span>IPv4 <strong id="ip4">—</strong></span><span>IPv6 <strong id="ip6">—</strong></span></div>
         </div>
 
-        <div class="section-head"><div><span class="section-index">03</span><h2>导出客户端配置</h2></div><span class="section-help">适用于支持 Cloudflare WARP MASQUE 的内核</span></div>
-        <div class="workspace export-workspace">
+        <div class="action-row">
+          <button type="button" class="primary" id="quickDownloadBtn">↓ 下载 v2rayN 配置</button>
+          <span class="hint">默认使用 HTTP/2 · 本地 SOCKS 端口 10808</span>
+        </div>
+        <details class="workspace export-workspace advanced-export" id="exportSettings">
+          <summary>高级导出设置与 usque 备份</summary>
           <div class="two-fields">
             <label class="field">目标客户端 / 格式
               <select id="outputFormat">
@@ -99,11 +119,11 @@
           <pre id="preview" class="preview" tabindex="0">准备配置…</pre>
           <div class="action-row export-buttons"><button type="button" class="primary" id="downloadBtn">↓ 下载所选配置</button><button type="button" class="secondary" id="copyBtn">复制配置</button><button type="button" class="ghost" id="downloadUsqueBtn">备份 usque 凭据</button></div>
           <p class="sensitive-note">下载的配置含有可用于连接 WARP 的设备私钥。请本地妥善保存，勿发布在 GitHub、群聊、公开网盘或订阅 URL。</p>
-        </div>
+        </details>
       </section>
 
-      <section class="guide-card"><h2>导入 v2rayN，完成连接</h2><ol><li>选择“完整 Xray 配置”，先下载 HTTP/2 版本。</li><li>在 v2rayN 添加自定义配置服务器，导入 JSON，内核选择 Xray。</li><li>将 v2rayN 本地 SOCKS 端口与上方一致，设为活动服务器，开启系统代理。</li><li>通过代理访问 <a href="https://www.cloudflare.com/cdn-cgi/trace" target="_blank" rel="noopener noreferrer">WARP 检测页</a>，确认 warp=on 或 warp=plus。</li></ol><p>当前状态：仅完成浏览器格式和密钥检查；未进行客户端连接验证。Xray 26.11.9 已通过 H2/H3 配置加载检查；v2rayN GUI 尚需实机验证。网页直接打开检测页的结果只反映当前浏览器网络，必须先启用客户端代理。</p></section>
-      <section class="help-section"><div class="section-head"><div><span class="section-index">04</span><h2>常见问题</h2></div></div>
+      <section class="guide-card"><h2>导入 v2rayN，完成连接</h2><ol><li>选择“完整 Xray 配置”，先下载 HTTP/2 版本。</li><li>在 v2rayN 添加自定义配置服务器，导入 JSON，内核选择 Xray。</li><li>将 v2rayN 本地 SOCKS 端口与上方一致，设为活动服务器，开启系统代理。</li><li>通过代理访问 <a href="https://www.cloudflare.com/cdn-cgi/trace" target="_blank" rel="noopener noreferrer">WARP 检测页</a>，确认 warp=on 或 warp=plus。</li></ol><p>核对 WARP+ 出口时，请通过导入后的代理访问检测页。设备的账户权益可在生成时验证，当前网络能否连通由客户端的测试结果确认。</p></section>
+      <section class="help-section"><div class="section-head"><div><h2>常见问题</h2></div></div>
         <details><summary>为什么网页不能直接打开 VPN？</summary><p>浏览器网页没有系统级 TUN、路由表或网络代理控制权限。本项目的跨平台能力指设备注册与配置生成；实际加密隧道由本机的 Xray、usque 或支持该扩展的客户端连接。</p></details>
         <details><summary>这和 WireGuard WARP 有什么区别？</summary><p>本工具生成用于 MASQUE CONNECT-IP 的 P-256 私钥与注册设备，不是 wgcf 生成的 Curve25519 WireGuard 配置。请勿混用。</p></details>
 

@@ -233,3 +233,8 @@ export function makeSingboxLxOutbound(config, options = {}) {
   };
 }
 export const prettyJson = obj => JSON.stringify(obj, null, 2) + '\n';
+
+export function extractWarpLicenses(text) {
+  const pattern = /(?<![A-Za-z0-9-])[A-Za-z0-9]{8}(?:-[A-Za-z0-9]{8}){2}(?![A-Za-z0-9-])/g;
+  return [...new Set(text.match(pattern) || [])];
+}

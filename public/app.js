@@ -1,13 +1,16 @@
 import {
   bytesToHex,randomBytes,cfTimestamp,generateMasqueKeys,generateRegistrationPublicKey,
   buildUsqueFromApi,normalizeUsqueConfig,makeXrayOutbound,makeXrayFull,
-  makeSingboxLxOutbound,prettyJson,validateCrypto,validatePublicKey
+  makeSingboxLxOutbound,extractWarpLicenses,prettyJson,validateCrypto,validatePublicKey
 } from './lib.mjs';
 
 const $ = id => document.getElementById(id);
 let device = null;
+let deviceHasPlus = false;
+let importing = false;
 let pendingRegistration = null;
 let registering = false;
+let authorizing = false;
 let lastError = '';
 
 function message(text, error = false) {
@@ -18,6 +21,7 @@ function message(text, error = false) {
 }
 function steps(text) { $('registrationSteps').hidden = false; $('registrationSteps').textContent = text; }
 function switchTab(which) {
+  if (registering || importing) return;
   const isReg = which === 'register';
   $('tabRegister').classList.toggle('active',isReg);
   $('tabImport').classList.toggle('active',!isReg);
@@ -26,12 +30,14 @@ function switchTab(which) {
   $('registerPane').hidden = !isReg;
   $('importPane').hidden = isReg;
 }
-async function loadDevice(raw, source) {
+async function loadDevice(raw, source, plus = false) {
   await validateCrypto(raw);
   const conf = normalizeUsqueConfig(raw);
   device = conf;
-  pendingRegistration = null;
+  deviceHasPlus = plus;
   $('resultSection').hidden = false;
+  $('exportSettings').open = false;
+  $('deviceStatus').textContent = plus ? 'WARP+ 账户权益已确认' : '设备配置已载入';
   $('deviceId').textContent = '设备 ID：' + (conf.id ? conf.id.slice(0,8) + '…' + conf.id.slice(-4) : '从本地配置导入');
   $('ip4').textContent = conf.ipv4;
   $('ip6').textContent = conf.ipv6 || '未分配';
@@ -44,10 +50,10 @@ async function loadDevice(raw, source) {
   $('endpointInput').value = conf.endpoint_h2_v4 || '162.159.198.2';
   $('outputFormat').value = 'xray-full';
   renderPreview();
-  message(`${source}成功。设备私钥仅在当前页面内存中；请立即下载 usque 原生备份。`);
+  message(`${source}成功，可以下载 v2rayN 配置。`);
   $('resultSection').scrollIntoView({behavior:'smooth',block:'start'});
 }
-async function apiRequest(path, body, accessCode) {
+async function apiRequest(path, body, accessCode = "") {
   let res;
   try {
     res = await fetch(path, {
@@ -59,70 +65,164 @@ async function apiRequest(path, body, accessCode) {
   } catch { throw new Error('无法连接注册后端。请检查 注册服务的部署与 /api/health 状态。'); }
   let data;
   try { data = await res.json(); } catch { throw new Error(`服务端不是 JSON 响应（HTTP ${res.status}），请检查 注册服务是否正常运行。`); }
-  if (!res.ok) throw new Error(data.error || `请求失败，HTTP ${res.status}`);
+  if (!res.ok) {
+    const error = new Error(data.error || `请求失败，HTTP ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
   return data;
 }
-async function registerDevice() {
-  if (registering) return;
-  if (!$('tosCheck').checked) return message('注册前请先阅读并接受 Cloudflare 服务条款。',true);
-  const code = $('accessCode').value.trim();
-  if (!code) return message('请填写 服务端的注册访问口令。',true);
-  if(!crypto?.subtle)return message('注册需要 HTTPS 或 localhost 安全环境',true);
-  const name = $('deviceName').value.trim() || 'Web-MASQUE';
-  registering = true; $('registerBtn').disabled = true;
+function updateLicenseChoices() {
+  const licenses = extractWarpLicenses($('licenseInput').value);
+  const select = $('licenseChoice');
+  const previous = select.value;
+  select.replaceChildren(new Option('请选择密钥', ''));
+  for (const [i, key] of licenses.entries()) {
+    select.add(new Option(`第 ${i + 1} 条 · ${key.slice(0, 4)}…${key.slice(-4)}`, key));
+  }
+  if (licenses.includes(previous)) select.value = previous;
+  $('licenseChoiceField').hidden = licenses.length < 2;
+  return licenses;
+}
+
+function showRegistrationAccess(authorized, enabled = true) {
+  $('loginForm').hidden = !enabled || authorized;
+  $('licenseFlow').hidden = !enabled || !authorized;
+}
+
+async function authorize(event) {
+  event.preventDefault();
+  if (authorizing) return;
+  authorizing = true;
+  $('loginBtn').disabled = true;
+  try {
+    await apiRequest('/api/session', {}, $('accessCode').value);
+    $('accessCode').value = '';
+    const health = await checkBackend();
+    if (!health?.authorized) throw Error('会话未建立，请通过 HTTPS 域名或 localhost 访问。');
+    $('statusMessage').hidden = true;
+    $('licenseInput').focus();
+  } catch (error) {
+    message(error.message, true);
+  } finally {
+    authorizing = false;
+    $('loginBtn').disabled = false;
+  }
+}
+
+function updateRegistrationControls() {
+  const attempt = pendingRegistration;
+  const keyLocked = Boolean(attempt?.bindingAttempt);
+  const ready = deviceHasPlus;
+  $('licenseInput').disabled = registering || keyLocked || ready;
+  $('licenseChoice').disabled = $('licenseInput').disabled;
+  $('registerBtn').disabled = registering || ready;
+  $('freeRegisterBtn').disabled = registering || Boolean(attempt?.mode === 'plus') || ready;
+  $('registerBtn').textContent = ready ? '配置已生成'
+    : attempt?.enrolled ? '确认 WARP+ 权益'
+    : attempt?.bindingConfirmed ? '继续登记'
+    : attempt?.mode === 'plus' ? '继续生成' : '生成配置';
+}
+
+async function registerDevice(mode) {
+  if (registering || importing || (mode === 'plus' && deviceHasPlus)) return;
+  if (!globalThis.crypto?.subtle) return message('注册需要 HTTPS 或 localhost 安全环境。', true);
+  if (pendingRegistration && pendingRegistration.mode !== mode) {
+    return message('请先完成当前页面的设备注册。', true);
+  }
+  if (mode === 'free' && !$('tosCheck').checked) return message('请先确认免费 WARP 注册条款。', true);
+  const licenses = updateLicenseChoices();
+  const license = pendingRegistration?.bindingAttempt || (licenses.length === 1 ? licenses[0] : $('licenseChoice').value);
+  if (mode === 'plus' && !license) {
+    return message(licenses.length ? '请选择要使用的许可证。' : '请粘贴一条有效格式的 WARP+ 密钥。', true);
+  }
+  const name = mode === 'plus' ? 'Web-MASQUE' : $('deviceName').value.trim() || 'Web-MASQUE';
+  registering = true;
+  updateRegistrationControls();
   $('statusMessage').hidden = true;
-  let history = [];
-  const log = s => { history.push(s); steps(history.join('\n')); };
   try {
     if (!pendingRegistration) {
-      log('01 / 03  正在浏览器本地生成 P-256 密钥…');
+      steps('正在生成设备密钥并注册 WARP 设备…');
       const keys = await generateMasqueKeys();
-      log('02 / 03  创建 Cloudflare WARP 个人设备账户…');
       const account = await apiRequest('/api/register', {
         key: await generateRegistrationPublicKey(), serial_number: bytesToHex(randomBytes(8)), tos: cfTimestamp()
-      },code);
-      if (!account?.id || !account?.token) throw new Error('上游注册响应缺少 id/token，请检查上游版本');
-      pendingRegistration = {keys,account};
-    } else {
-      log('检测到上次注册已创建账户，尝试继续设备密钥登记（不重复新建账户）。');
+      });
+      if (!account?.id || !account?.token) throw Error('Cloudflare 注册响应缺少设备 ID 或令牌。');
+      pendingRegistration = {keys, account, mode};
     }
-    log('03 / 03  将设备公钥登记为 MASQUE；私钥不上传…');
-    const enrolled = await apiRequest('/api/enroll', {
-      id:pendingRegistration.account.id,
-      token:pendingRegistration.account.token,
-      public_key:pendingRegistration.keys.publicKey,
-      name
-    },code);
-    const newConfig = buildUsqueFromApi(pendingRegistration.account,enrolled,pendingRegistration.keys);
-    log('✓ 已注册并完成 MASQUE enroll。');
-    $('accessCode').value = '';
-    await loadDevice(newConfig,'WARP MASQUE 注册');
-  } catch (e) {
-    log('✗ ' + String(e?.message || e));
-    message(String(e?.message || e) + (pendingRegistration ? '。可再次点击注册以继续公钥登记，不会重复创建账号。' : ''),true);
+    const attempt = pendingRegistration;
+    const credentials = {id: attempt.account.id, token: attempt.account.token};
+    const licenseRequest = {...credentials, license};
+    if (mode === 'plus' && !attempt.bindingConfirmed) {
+      if (attempt.bindingAttempt) {
+        steps('正在查询上次许可证绑定的结果…');
+        const status = await apiRequest('/api/license/status', licenseRequest);
+        attempt.bindingConfirmed = status.matched;
+      }
+      if (!attempt.bindingConfirmed) {
+        steps('正在将 WARP+ 许可证绑定到当前设备…');
+        attempt.bindingAttempt = license;
+        try {
+          await apiRequest('/api/license', licenseRequest);
+          attempt.bindingConfirmed = true;
+        } catch (error) {
+          if ([409, 422].includes(error.status)) attempt.bindingAttempt = '';
+          throw error;
+        }
+      }
+    }
+    if (!attempt.enrolled) {
+      steps('正在登记 MASQUE 设备公钥…');
+      const enrolled = await apiRequest('/api/enroll', {...credentials, public_key: attempt.keys.publicKey, name});
+      if (enrolled.id && enrolled.id !== credentials.id) throw Error('Cloudflare 返回了不同的设备 ID。');
+      const config = buildUsqueFromApi(attempt.account, enrolled, attempt.keys);
+      if (mode === 'plus') config.license = license;
+      await validateCrypto(config);
+      attempt.enrolled = config;
+    }
+    if (mode === 'plus') {
+      steps('正在确认当前设备的 WARP+ 权益…');
+      const status = await apiRequest('/api/license/status', licenseRequest);
+      if (!status.matched) throw Error('Cloudflare 尚未确认此设备绑定了所选许可证，请稍后继续。');
+      if (!status.plus) throw Error('Cloudflare 已绑定此许可证，当前账户未显示 WARP+ 权益。请检查订阅状态后再继续。');
+    }
+    await loadDevice(attempt.enrolled, mode === 'plus' ? 'WARP+ MASQUE 配置生成' : 'WARP MASQUE 注册', mode === 'plus');
+    pendingRegistration = null;
+    $('licenseInput').value = '';
+    updateLicenseChoices();
+    steps('配置已生成，可下载。');
+  } catch (error) {
+    if (error.status === 401) showRegistrationAccess(false);
+    steps('生成暂停');
+    message(error.message + (pendingRegistration ? ' 再次点击可沿用当前设备继续。' : ''), true);
   } finally {
     registering = false;
-    $('registerBtn').disabled = false;
+    updateRegistrationControls();
   }
 }
 async function importFile(file) {
+  if (!file || registering || importing) return;
+  importing = true;
   try {
-    if (!file) return;
     if (file.size > 1048576) throw new Error('配置文件不能超过 1 MB');
     const raw = JSON.parse(await file.text());
     await loadDevice(raw,'导入');
     $('importText').value = '';
   } catch(e) { message('导入失败：' + e.message,true); }
+  finally { importing = false; updateRegistrationControls(); }
 }
 async function importPasted() {
+  if (registering || importing) return;
+  importing = true;
   try { if($('importText').value.length>1048576)throw Error('配置不能超过 1 MB'); await loadDevice(JSON.parse($('importText').value),'导入'); $('importText').value=''; }
   catch(e) { message('导入失败：' + e.message,true); }
+  finally { importing = false; updateRegistrationControls(); }
 }
 function filename() {
   const f = $('outputFormat').value;
   const t = $('transport').value;
   if (f === 'usque') return 'usque-config.json';
-  if (f === 'xray-full') return `warp-xray-${t}-full.json`;
+  if (f === 'xray-full') return `warp-masque-xray-${t}.json`;
   if (f === 'singbox-lx') return `warp-singbox-lx-${t}-outbound.json`;
   return `warp-xray-${t}-outbound.json`;
 }
@@ -204,14 +304,17 @@ async function handleCopy() {
   } catch (e) { message('复制失败。请使用下载按钮，或在 HTTPS 环境中重试。',true); }
 }
 function clearSensitive() {
-  if(registering)return message('注册进行中，请等待完成后再清除',true);
+  if (registering || importing) return message('请等待当前操作完成后再清除。', true);
   if (!device && !pendingRegistration) return;
   if (!confirm('清除当前页面中的设备凭据？如果尚未备份，私钥将无法恢复。')) return;
-  device = null; pendingRegistration = null; lastError = '';
+  device = null; deviceHasPlus = false; pendingRegistration = null; lastError = '';
   $('resultSection').hidden = true;
   $('preview').textContent = '';
   $('registrationSteps').textContent = ''; $('registrationSteps').hidden = true;
   $('importText').value = ''; $('importFile').value = ''; $('accessCode').value = '';
+  $('licenseInput').value = '';
+  updateLicenseChoices();
+  updateRegistrationControls();
   message('当前页面中的设备凭据已清除；已下载到设备的文件不会被删除。');
   window.scrollTo({top:0,behavior:'smooth'});
 }
@@ -224,13 +327,28 @@ async function checkBackend() {
     if (!data.ok) throw Error();
     el.textContent = data.registrationEnabled ? '注册服务已就绪' : '后端缺少访问口令';
     el.className = 'online ' + (data.registrationEnabled ? 'good' : 'error');
+    showRegistrationAccess(data.authorized, data.registrationEnabled);
+    return data;
   } catch {
     el.textContent = '离线转换模式'; el.className = 'online error';
   }
 }
 $('tabRegister').addEventListener('click',()=>switchTab('register'));
 $('tabImport').addEventListener('click',()=>switchTab('import'));
-$('registerBtn').addEventListener('click',registerDevice);
+$('loginForm').addEventListener('submit', authorize);
+$('licenseInput').addEventListener('input', updateLicenseChoices);
+$('registerBtn').addEventListener('click', () => registerDevice('plus'));
+$('freeRegisterBtn').addEventListener('click', () => registerDevice('free'));
+$('quickDownloadBtn').addEventListener('click', () => {
+  if (!device) return;
+  try {
+    saveFile('warp-masque-xray.json', makeXrayFull(device, {
+      mode: 'h2', family: 'v4', endpoint: device.endpoint_h2_v4, localPort: 10808
+    }));
+  } catch (error) {
+    message('下载失败：' + error.message, true);
+  }
+});
 $('importBtn').addEventListener('click',importPasted);
 $('importFile').addEventListener('change',e=>importFile(e.target.files?.[0]));
 $('outputFormat').addEventListener('change',renderPreview);

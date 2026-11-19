@@ -118,3 +118,84 @@ func TestUpstreamTimeoutAndRedaction(t *testing.T) {
 		t.Fatal(w.Body.String())
 	}
 }
+
+func TestSessionAndLicenseAdapter(t *testing.T) {
+	const key = "Abcdef12-Abcdef34-Abcdef56"
+	const secret = "upstream-device-secret"
+	var bound bool
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/reg/device-1234/account" || r.Header.Get("Authorization") != "Bearer device-token" {
+			t.Errorf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+		}
+		switch r.Method {
+		case http.MethodPut:
+			var payload map[string]string
+			if json.NewDecoder(r.Body).Decode(&payload) != nil || len(payload) != 1 || payload["license"] != key {
+				t.Error("unexpected license payload")
+			}
+			bound = true
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodGet:
+			if payload, _ := io.ReadAll(r.Body); len(payload) != 0 {
+				t.Error("status request carried a body")
+			}
+			if !bound {
+				respond(w, 200, map[string]string{"account_type": "free"})
+				return
+			}
+			respond(w, 200, map[string]any{"account_type": "unlimited", "license": key, "token": secret})
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+			w.WriteHeader(500)
+		}
+	}))
+	defer up.Close()
+	s := &service{token: strings.Repeat("x", 32), upstream: up.URL, client: up.Client()}
+	login := request(s, "/api/session", "{}", s.token, "")
+	cookies := login.Result().Cookies()
+	if login.Code != 200 || len(cookies) != 1 || !cookies[0].HttpOnly || !cookies[0].Secure || cookies[0].SameSite != http.SameSiteStrictMode {
+		t.Fatal("missing protected session cookie")
+	}
+	body := `{"id":"device-1234","token":"device-token","license":"` + key + `"}`
+	send := func(path, cookie string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "https://localhost"+path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-WARP-Action", "personal-enrollment")
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: cookie})
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		return w
+	}
+	cookie := cookies[0].Value
+	if w := send("/api/license", cookie+"tampered"); w.Code != 401 {
+		t.Fatal("invalid session could bind")
+	}
+	for _, step := range []struct{ path, want string }{
+		{"/api/license/status", `{"matched":false,"plus":false}`},
+		{"/api/license", `{"ok":true}`},
+		{"/api/license/status", `{"matched":true,"plus":true}`},
+	} {
+		w := send(step.path, cookie)
+		if w.Code != 200 || strings.TrimSpace(w.Body.String()) != step.want {
+			t.Fatalf("%s: %d %s", step.path, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestLicenseErrorRedaction(t *testing.T) {
+	for _, tc := range []struct {
+		detail string
+		want   int
+	}{
+		{"Invalid license: TOP_SECRET", 422},
+		{"Maximum device limit for TOP_SECRET", 409},
+		{"Unknown error with TOP_SECRET", 502},
+	} {
+		w := httptest.NewRecorder()
+		data, _ := json.Marshal(map[string]any{"errors": []map[string]string{{"message": tc.detail}}})
+		licenseFailure(w, 400, data, http.MethodPut)
+		if w.Code != tc.want || strings.Contains(w.Body.String(), "TOP_SECRET") {
+			t.Fatalf("unexpected error mapping: %d %s", w.Code, w.Body.String())
+		}
+	}
+}

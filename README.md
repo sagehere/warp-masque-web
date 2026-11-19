@@ -1,21 +1,29 @@
-# WARP MASQUE Web v0.2.0
+# WARP MASQUE Web v0.3.0
 
-简体中文网页工具：注册个人 WARP 设备，或导入已有 usque 配置，直接生成供 v2rayN/Xray 使用的 MASQUE 配置。支持电脑、手机浏览器操作；实际隧道由客户端建立。
+简体中文网页工具。解锁生成后，粘贴个人 WARP+ 许可证，点击「生成配置」，即可生成供 v2rayN/Xray 使用的 MASQUE JSON。也可注册免费 WARP 设备或导入已有 usque 配置。
+
+## 用 WARP+ 密钥生成
+
+1. 从你有权使用的 1.1.1.1 应用账户复制许可证，格式为 `xxxxxxxx-xxxxxxxx-xxxxxxxx`。也可粘贴带标签、流量说明的文本。识别到多条时，手动选择其中一条。
+2. 用部署时配置的网页访问口令解锁。HTTPS 同源会话有效期为 8 小时。随后只需填写 WARP+ 许可证。设备注册会占用许可证设备名额。
+3. 点击「生成配置」。网页在浏览器生成 P-256 密钥，注册设备、绑定许可证、登记公钥，再查询同一设备的许可证与 WARP+ 权益。遇到临时错误时，保留当前页面并点击继续。刷新会丢失页面内的设备凭据。
+4. 点击「下载 v2rayN 配置」保存默认 H2 文件 `warp-masque-xray.json`。H3、自定义参数与 usque 备份位于「高级导出设置与 usque 备份」。
+5. 导入配置并检查实际出口。账户查询显示 WARP+ 后，仍需在本地客户端验证隧道连接。
 
 ## 当前功能
 
-- 浏览器本地 WebCrypto 生成 P-256 私钥；Go 服务仅转发账号注册、公钥登记请求。
+- 浏览器本地 WebCrypto 生成 P-256 私钥；Go 服务转发设备注册、许可证绑定、公钥登记和账户查询。
 - 导入 usque JSON；支持 SEC1 / PKCS#8 Base64 或 PEM 私钥，严格解析 P-256，执行签名验签检查，拒绝 WireGuard 私钥。
 - H2/TCP、H3/QUIC 分别生成；IPv4/IPv6 外层端点可选。H2 的 IPv6 端点未提供时要求手工填写，不编造端点。
 - 默认导出完整 Xray JSON，另支持单出站和 usque 备份。连接 JSON 不含账号令牌或许可证。
 - 本地 SOCKS 端口可配置，HTTP 为相邻端口；路由可选“全部经 WARP”或“局域网直连”。路由不依赖 geoip.dat。
 - 自定义隧道 DNS、SNI、服务端公钥；保持公钥固定校验。
-- 注册接口默认关闭，需至少 16 字符口令；限制一项并发、新注册至少间隔 60 秒；登记失败可在当前页面继续，不重复创建账号。
+- 注册接口默认关闭，需至少 16 字符口令。上游请求限制为一项并发，新注册至少间隔 60 秒。绑定或登记失败时可在当前页面沿用已注册设备继续。
 - 无数据库、无 npm 运行时依赖；一个 Go 二进制内嵌整个网页，或一个 Docker 容器。
 
 ## 快速运行
 
-请从 [Releases](https://github.com/sagehere/warp-masque-web/releases) 下载完整包（含 `bin/`）或对应架构的程序。Git 仓库仅包含源码。完整包在 x86 VPS 的运行示例：
+已附 Linux amd64 / arm64 二进制，位于 `bin/`。例如 x86 VPS：
 
 ```bash
 chmod +x bin/warp-web-linux-amd64
@@ -55,13 +63,13 @@ warp.example.com {
 
 5. NPM/Caddy 若运行在另一个容器，容器内的 `127.0.0.1` 指向该容器自身。可为两个服务加入已有共享 Docker 网络，由反代连接 `warp-web:8080`；或在 `.env` 将 `BIND_IP` 改为宿主机上反代可达的地址，并用防火墙限制入口。无需让本项目管理反代。
 6. 反代应保留原始 Host，HTTPS 超时设为至少 30 秒。建议 Cloudflare DNS 初次使用仅 DNS 模式排查；橙云代理只承载网页及注册 API，不承载客户端 MASQUE 隧道。
-7. 打开 `https://你的域名/api/health`，确认 `registrationEnabled:true`。打开首页填写注册口令，确认服务条款后注册；注册成功先备份 usque 配置。
+7. 打开 `https://你的域名/api/health`，确认 `registrationEnabled:true`。打开首页填写网页访问口令并解锁，再粘贴 WARP+ 密钥。
 
-升级时替换源码，执行 `docker compose up -d --build`。服务没有数据库、账号文件或持久卷；当前设备凭据在网页内存中，刷新前请下载备份。
+从 v0.2.0 升级时，在 Dockge 的 Stack 目录替换源码并保留现有 `.env`。在 Dockge 终端执行 `docker compose up -d --build`。如使用本包的 Linux 二进制运行，替换对应架构的二进制并重启服务。反代继续保留原有配置。服务无需数据库或持久卷。刷新生成页前，请保存所需配置。
 
 ## v2rayN 导入
 
-1. 先在 v2rayN 更新 Xray 核心。页面选择“v2rayN · 完整 Xray 配置”，建议先测试 H2。
+1. 先在 v2rayN 更新 Xray 核心。页面点击「下载 v2rayN 配置」取得默认 H2 文件。
 2. 下载 JSON。在支持对应功能的 v2rayN 中添加“自定义配置服务器”，导入完整配置，内核选择 Xray。不同客户端版本的菜单可能略有区别。
 3. 将 v2rayN 的本地 SOCKS 监听端口与生成器保持一致，默认 10808；HTTP 为 10809。确保端口没有被其他服务占用。
 4. 设为活动服务器，开启系统代理。完整配置包含自己的路由，不应假定 GUI 的分流设置自动合入该文件。首版自定义完整配置以系统代理模式为验收目标，TUN 模式未验证。
@@ -71,7 +79,7 @@ warp.example.com {
 curl.exe --proxy http://127.0.0.1:10809 https://www.cloudflare.com/cdn-cgi/trace
 ```
 
-预期 `warp=on` 或 `warp=plus`。网页直接打开检测链接只有在浏览器已走客户端代理时才有意义。
+WARP+ 配置的实机验收目标为 `warp=plus`。`warp=on` 只确认 WARP 连通，应结合网页显示的账户状态继续排查。需明确由本机代理发起检测请求。
 
 高级用户可选择单出站格式，交给客户端的“自定义出站服务器”功能。单出站不能当完整 Xray 配置运行。当前未生成 `masque://` URI。
 
@@ -83,27 +91,8 @@ H3 使用登记响应中的端点与公钥。默认 H2 `162.159.198.2` 使用已
 
 ## 账号与隐私
 
-注册适配器参考 usque 固定提交，来源见 `UPSTREAM.md`，不是启动 usque 隧道或伪造 VLESS 桥接。注册设备私钥不上传；账号令牌、公钥及设备信息需由 Go 后端转发给 Cloudflare，后端不记录或持久保存这些字段。无需 Cloudflare 管理 API Token。
+注册及许可证适配器参考 usque 固定提交，来源见 `UPSTREAM.md`。P-256 私钥留在本机，账号令牌、许可证和设备公钥由 Go 服务转发给 Cloudflare。服务不记录或持久保存这些字段。网页访问口令只用于本工具的会话认证。部署时应避免配置反代记录访问口令、Cookie 或请求正文。
 
-只有用户勾选条款并点击注册后才访问注册 API。接口可能被上游限流、拒绝出口或改变协议；失败时可在本地用 usque 注册，然后导入生成的 config.json。不要连续重复注册。
+许可证在用户点击生成后才提交。Xray 连接文件仅含连接所需的设备私钥等配置。usque 原生备份也包含设备令牌和许可证，请妥善保管。上游接口可能限流、拒绝某些部署出口或变更协议。刷新网页会丢失待继续的注册状态。
 
-页面刷新或关闭会丢失内存中的凭据。备份包含账号令牌和私钥；不要提交 Git、分享公开 URL。此版本未实现 WARP+ 升级、Zero Trust SSO、账号删除、公开订阅托管、自动端点测速。
-
-## 验证
-
-```bash
-go test -race ./...
-node --test tests/*.test.mjs
-node --check public/app.js
-XRAY_BIN=/path/to/xray node tests/xray-check.mjs
-```
-
-本次验证结果见 `VALIDATION.md`。配置加载测试使用临时未注册密钥，不能证明与 WARP 成功连接。导入模式可将 `public/` 静态托管；该目录不再包含 v0.1 的 Pages Worker，在线注册需本版 Go 服务。
-
-## GitHub 镜像
-
-附 `.github/workflows/docker.yml`。上传你自己的 GitHub 仓库 main 分支后，测试通过自动构建 linux/amd64、linux/arm64 镜像，仅推送 GHCR。仓库：https://github.com/sagehere/warp-masque-web 。镜像由 GitHub Actions 自动构建；以 Actions 运行结果为准。
-
-发布后可将 Compose 的 `build: .` 换成 `image: ghcr.io/sagehere/warp-masque-web:latest`。需要公开拉取时，在 GitHub Packages 中将该包可见性设为 Public。
-
-代码 MIT；usque 原许可保留在 `USQUE-LICENSE.md`。与 Cloudflare 无隶属关系。
+本轮模拟过真实浏览器到 Go 后端的完整生成流程，并使用 Xray 核心加载实际下载的 H2、H3 文件。真实 Cloudflare 许可证绑定与 v2rayN 实机连接等待自有有效许可证验证。见 `VALIDATION.md`。

@@ -8,3 +8,11 @@ test('SEC1/PKCS8、CIDR 兼容与密码学校验',async()=>{const c=await fixtur
 test('拒绝无效 IPv6、DNS 和本地端口，IPv6 缺少 H2 端点时报错',async()=>{const c=await fixture();assert.equal(isIP('1:2:3'),false);assert.equal(isIP('::::'),false);assert.equal(isIP('2606:4700:103::2'),true);assert.throws(()=>makeXrayOutbound(c,{family:'v6',mode:'h2'}),/IPv6/);assert.throws(()=>makeXrayOutbound(c,{dns:'example.com'}),/DNS/);assert.throws(()=>makeXrayFull(c,{localPort:65535}),/端口/);});
 test('导出不含账号令牌和许可证，局域网直连不依赖 geoip 文件',async()=>{const c=await fixture();const full=makeXrayFull(c,{localPort:11080,route:'lan-direct'});assert.equal(full.inbounds[1].port,11081);assert.ok(full.routing.rules[0].ip.includes('192.168.0.0/16'));const text=JSON.stringify(full);assert.ok(!text.includes(c.access_token));assert.ok(!text.includes(c.license));assert.ok(!text.includes('geoip:'));});
 test('拒绝未启用 WARP 的登记结果',async()=>{assert.throws(()=>buildUsqueFromApi({}, {warp_enabled:false},{}),/尚未启用/);});
+
+test('从带流量说明的文本识别密钥，保留大小写和输入顺序', async () => {
+  const {extractWarpLicenses} = await import('../public/lib.mjs');
+  const first = 'Abcdef12-Abcdef34-Abcdef56';
+  const second = '9abcdefG-8abcdefH-7abcdefI';
+  assert.deepEqual(extractWarpLicenses(`密钥：\n${first}\n(1 GB)\n密钥：\n${second}\n${first}`), [first, second]);
+  assert.deepEqual(extractWarpLicenses(`0${first}\n${second}-1234\n${first.slice(1)}`), []);
+});
