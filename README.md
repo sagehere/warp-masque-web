@@ -43,29 +43,32 @@ go run .
 
 ## Dockge / Docker Compose 部署
 
-1. 把项目目录复制至 VPS，例如 `/opt/stacks/warp-masque-web`。目录内应有 `Dockerfile`、`compose.yml`、`main.go`、`go.mod` 和 `public/`。
-2. 复制 `.env.example` 为 `.env`，设置 `REGISTRATION_TOKEN` 为随机长口令。可用 `openssl rand -hex 24` 生成。此口令用于保护注册接口，不是 WARP 账号口令。
-3. 在 Dockge 中扫描/载入该 Stack（目录必须在 Dockge 的 stacks 路径中）。保留提供的 Compose，执行构建并启动；或命令行运行：
+Compose 从 GitHub Container Registry 拉取 `ghcr.io/sagehere/warp-masque-web:latest`。镜像支持 Linux amd64 和 arm64。
+
+1. 将 `compose.yml` 和 `.env.example` 放到 VPS 的 Dockge Stack 目录，例如 `/opt/stacks/warp-masque-web`。
+2. 首次部署时，把 `.env.example` 复制为 `.env`，将 `REGISTRATION_TOKEN` 设置为随机长口令。可用 `openssl rand -hex 24` 生成。宿主机默认监听 `127.0.0.1:9000`。
+3. 在 Dockge 扫描并启动该 Stack，或在 Stack 目录执行：
 
 ```bash
-cp .env.example .env
-# 编辑 .env 后运行
-docker compose up -d --build
+docker compose up -d
+curl -fsS http://127.0.0.1:9000/api/health
 ```
 
-4. 同一宿主机的原生 Caddy 可反代 `127.0.0.1:8080`。Caddy 示例：
+4. 如果 Caddy 直接运行在宿主机上，反代 `127.0.0.1:9000`：
 
 ```caddyfile
 warp.example.com {
-    reverse_proxy 127.0.0.1:8080
+    reverse_proxy 127.0.0.1:9000
 }
 ```
 
-5. NPM/Caddy 若运行在另一个容器，容器内的 `127.0.0.1` 指向该容器自身。可为两个服务加入已有共享 Docker 网络，由反代连接 `warp-web:8080`；或在 `.env` 将 `BIND_IP` 改为宿主机上反代可达的地址，并用防火墙限制入口。无需让本项目管理反代。
-6. 反代应保留原始 Host，HTTPS 超时设为至少 30 秒。建议 Cloudflare DNS 初次使用仅 DNS 模式排查；橙云代理只承载网页及注册 API，不承载客户端 MASQUE 隧道。
-7. 打开 `https://你的域名/api/health`，确认 `registrationEnabled:true`。打开首页填写网页访问口令并解锁，再粘贴 WARP+ 密钥。
+5. 如果 NPM 或 Caddy 运行在 Docker 容器里，把反代与 `warp-web` 加入同一个 Docker 网络，反代地址用 `warp-web:8080`。
+6. 反代保留原始 Host，HTTPS 超时设为至少 30 秒。使用 Cloudflare DNS 时，可先用仅 DNS 模式排查 HTTPS。Cloudflare 橙云代理只承载网页和 API 请求，客户端独立连接 MASQUE 端点。
+7. 访问 `https://你的域名/api/health`，确认 `registrationEnabled:true`。打开首页，用 `REGISTRATION_TOKEN` 解锁，再输入 WARP+ 密钥。
 
-从 v0.2.0 升级时，在 Dockge 的 Stack 目录替换源码并保留现有 `.env`。在 Dockge 终端执行 `docker compose up -d --build`。如使用本包的 Linux 二进制运行，替换对应架构的二进制并重启服务。反代继续保留原有配置。服务无需数据库或持久卷。刷新生成页前，请保存所需配置。
+从源码构建的 Stack 迁移时，将原 `build: .` 替换为新版 Compose 中的 `image` 和 `pull_policy`，并保留 `.env` 和已有的反代网络配置。如要切换到 9000，需同时将已有 `.env` 的 `PORT` 改为 `9000`。宿主机反代使用新端口，共享 Docker 网络的反代继续使用容器端口 8080。
+
+更新镜像时，在 Dockge 重新部署，或再次执行 `docker compose up -d`，Compose 会检查并拉取最新的 `latest` 镜像。
 
 ## v2rayN 导入
 
