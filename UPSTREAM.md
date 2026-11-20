@@ -8,9 +8,6 @@ Go 后端不依赖 usque 的不稳定 Go 库接口，也不执行 usque 二进�
 v0.3.0 的个人许可证绑定和状态查询参考同一提交的 usque `account set` / `account info`，按设备认证访问 `/reg/{id}/account`。
 P-256 密钥生成移至浏览器 WebCrypto。私钥不会上传到 Go 服务。
 
-Xray 配置规范：
-https://xtls.github.io/config/transports/masque.html
-https://xtls.github.io/config/outbounds/masque.html
-https://xtls.github.io/document/level-2/warp.html
+usque 配置字段及密钥编码参考同一提交的 `config/config.go` 与 `cmd/register.go`。
 
 Cloudflare 注册 API 不具有稳定的公开接口承诺，后续变更可能需要更新适配器。

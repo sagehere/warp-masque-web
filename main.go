@@ -109,7 +109,7 @@ func (s *service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	if r.URL.Path == "/api/health" && r.Method == "GET" {
-		respond(w, 200, map[string]any{"ok": true, "version": "0.3.0", "registrationEnabled": len(s.token) >= 16, "authorized": len(s.token) >= 16 && s.hasSession(r), "adapter": "usque-compatible"})
+		respond(w, 200, map[string]any{"ok": true, "version": "0.4.0", "registrationEnabled": len(s.token) >= 16, "authorized": len(s.token) >= 16 && s.hasSession(r), "adapter": "usque-compatible"})
 		return
 	}
 	if !strings.HasPrefix(r.URL.Path, "/api/") {
@@ -303,6 +303,10 @@ func (s *service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if r.URL.Path == "/api/enroll" && (res.StatusCode == 401 || res.StatusCode == 409) {
+		fail(w, 422, fmt.Sprintf("Cloudflare 拒绝了设备公钥登记（HTTP %d）", res.StatusCode))
+		return
+	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 || !json.Valid(data) {
 		fail(w, 502, fmt.Sprintf("Cloudflare 注册接口返回 HTTP %d；请稍后重试或导入本地 usque 配置", res.StatusCode))
 		return
@@ -350,9 +354,9 @@ func main() {
 		log.Fatal("TLS_CERT_FILE and TLS_KEY_FILE must be configured together")
 	}
 	if certFile != "" {
-		log.Printf("WARP MASQUE Web v0.3.0: https://%s", addr)
+		log.Printf("WARP MASQUE Web v0.4.0: https://%s", addr)
 		log.Fatal(server.ListenAndServeTLS(certFile, keyFile))
 	}
-	log.Printf("WARP MASQUE Web v0.3.0: http://%s", addr)
+	log.Printf("WARP MASQUE Web v0.4.0: http://%s", addr)
 	log.Fatal(server.ListenAndServe())
 }

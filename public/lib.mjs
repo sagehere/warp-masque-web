@@ -1,10 +1,5 @@
 // Small, dependency-free helpers. All device secrets stay in browser memory.
 const H2_DEFAULT = '162.159.198.2';
-// Public pin for the standard personal-WARP H2 edge. Independently verify if Cloudflare rotates it.
-// Source: Xray-core issue #7115, the 162.159.198.2 certificate SPKI.
-const H2_DEFAULT_PUBLIC_KEY = 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEIaU7MToJm9NKp8YfGxR6r+/h4mcG7SxI8tsW8OR1A5tv/zCzVbCRRh2t87/kxnP6lAy0lkr7qYwu+ox+k3dr6w==';
-const SNI_DEFAULT = 'consumer-masque.cloudflareclient.com';
-
 export function derLength(n) {
   if (!Number.isInteger(n) || n < 0) throw new Error('DER 长度错误');
   if (n < 128) return Uint8Array.of(n);
@@ -90,20 +85,96 @@ function tlv(bytes) {
   const out=[];while(i<bytes.length)out.push(read());return out;
 }
 const CURVE='06082a8648ce3d030107', ALGORITHM='06072a8648ce3d0201';
-export function privateDer(value) {
-  const bytes=pemBytes(value), root=tlv(bytes);
-  if(root.length!==1||root[0].tag!==48)throw Error('P-256 私钥 DER 无效');
-  let parts=tlv(root[0].value);let pkcs8=parts[1]?.tag===48;
-  if(pkcs8) {
-    const alg=bytesToHex(parts[1].value);
-    if(alg!==ALGORITHM+CURVE||parts[2]?.tag!==4)throw Error('私钥必须使用 P-256 曲线');
-    const inner=tlv(parts[2].value);if(inner.length!==1||inner[0].tag!==48)throw Error('PKCS#8 私钥无效');parts=tlv(inner[0].value);
+function privateDer(value) {
+  const bytes = pemBytes(value);
+  if (bytes.length === 32) throw Error('检测到 32 字节密钥。请提供 MASQUE 的 P-256 私钥，WireGuard 密钥无法用于登记。');
+  const root = tlv(bytes);
+  if (root.length !== 1 || root[0].tag !== 48) throw Error('P-256 私钥 DER 无效');
+  let parts = tlv(root[0].value);
+  const pkcs8 = parts[1]?.tag === 48;
+  if (pkcs8) {
+    const alg = bytesToHex(parts[1].value);
+    if (alg !== ALGORITHM + CURVE || parts[2]?.tag !== 4) throw Error('私钥必须使用 P-256 曲线');
+    const inner = tlv(parts[2].value);
+    if (inner.length !== 1 || inner[0].tag !== 48) throw Error('PKCS#8 私钥无效');
+    parts = tlv(inner[0].value);
   }
-  if(parts[0]?.tag!==2||bytesToHex(parts[0].value)!=='01'||parts[1]?.tag!==4||parts[1].value.length!==32||!parts[1].value.some(x=>x))throw Error('private_key 不是 P-256 SEC1/PKCS#8 私钥（不能使用 WireGuard 私钥）');
-  const curve=parts.find(x=>x.tag===160);
-  if((!pkcs8&&!curve)||(curve&&bytesToHex(curve.value)!==CURVE))throw Error('私钥必须使用 P-256 曲线');
-  return {bytes,pkcs8,sec1:pkcs8?tlv(root[0].value)[2].value:bytes};
+  if (parts[0]?.tag !== 2 || bytesToHex(parts[0].value) !== '01' ||
+      parts[1]?.tag !== 4 || parts[1].value.length !== 32 || !parts[1].value.some(x => x)) {
+    throw Error('请输入 P-256 SEC1 或 PKCS#8 私钥');
+  }
+  const curve = parts.find(x => x.tag === 160);
+  if ((!pkcs8 && !curve) || (curve && bytesToHex(curve.value) !== CURVE)) throw Error('私钥必须使用 P-256 曲线');
+  return {bytes, pkcs8};
 }
+
+export function parsePrivateKeyInput(text) {
+  const value = text.trim();
+  if (!value) throw Error('请输入 MASQUE 私钥');
+  if (!value.startsWith('{')) return {privateKey: value};
+  let config;
+  try { config = JSON.parse(value); }
+  catch { throw Error('配置 JSON 格式无效'); }
+  const outbounds = Array.isArray(config.outbounds) ? config.outbounds : [config];
+  const masque = outbounds.filter(outbound => typeof outbound?.streamSettings?.masqueSettings?.warp?.privateKey === 'string');
+  const candidates = [config.private_key, config.privateKey, ...masque.map(outbound => outbound.streamSettings.masqueSettings.warp.privateKey)];
+  const keys = [...new Set(candidates.filter(key => typeof key === 'string' && key.trim()).map(key => key.trim()))];
+  if (!keys.length) throw Error('JSON 中没有找到 MASQUE 私钥');
+  if (keys.length > 1) throw Error('JSON 中有多把私钥，请单独粘贴要使用的一把');
+  return {privateKey: keys[0], outbound: masque.length === 1 ? masque[0] : undefined, backup: config.endpoint_pub_key ? config : undefined};
+}
+
+export async function convertMasqueOutbound(outbound) {
+  const {warp} = outbound.streamSettings.masqueSettings;
+  const {tlsSettings} = outbound.streamSettings;
+  const alpn = Array.isArray(tlsSettings?.alpn) ? tlsSettings.alpn.filter(x => x === 'h2' || x === 'h3') : [];
+  const transport = [...new Set(alpn)];
+  const endpoint = stripEndpoint(outbound.settings?.address);
+  const port = Number(outbound.settings?.port ?? 443);
+  if (transport.length !== 1 || !isIP(endpoint) || !warp.publicKey || !Array.isArray(warp.address) ||
+      !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw Error('MASQUE 出站缺少明确的 H2/H3、IP 端点、端口、设备地址或服务端公钥');
+  }
+  const http2 = transport[0] === 'h2';
+  const outerV6 = ipv6(endpoint);
+  const endpointField = 'endpoint_' + (http2 ? 'h2_' : '') + (outerV6 ? 'v6' : 'v4');
+  const config = await normalizeUsqueConfig({
+    private_key: warp.privateKey,
+    [endpointField]: endpoint,
+    endpoint_pub_key: warp.publicKey,
+    ipv4: warp.address.find(addr => ipv4(String(addr).split('/')[0])),
+    ipv6: warp.address.find(addr => ipv6(String(addr).split('/')[0]))
+  });
+  return {config, http2, outerV6, port};
+}
+
+export async function importMasqueKeys(value) {
+  const {bytes, pkcs8} = privateDer(value);
+  const algorithm = der(48, concat(b64ToBytes('BgcqhkjOPQIB'), b64ToBytes('BggqhkjOPQMBBw==')));
+  const encoded = pkcs8 ? bytes : der(48, concat(Uint8Array.of(2, 1, 0), algorithm, der(4, bytes)));
+  try {
+    const params = {name: 'ECDSA', namedCurve: 'P-256'};
+    const key = await crypto.subtle.importKey('pkcs8', encoded, params, true, ['sign']);
+    const jwk = await crypto.subtle.exportKey('jwk', key);
+    const verifyKey = await crypto.subtle.importKey('jwk', {
+      kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y
+    }, params, true, ['verify']);
+    const challenge = new TextEncoder().encode('warp-config-key-check');
+    const signParams = {name: 'ECDSA', hash: 'SHA-256'};
+    const signature = await crypto.subtle.sign(signParams, key, challenge);
+    if (!await crypto.subtle.verify(signParams, verifyKey, signature, challenge)) throw Error();
+    const spki = new Uint8Array(await crypto.subtle.exportKey('spki', verifyKey));
+    return {privateKey: bytesToB64(sec1P256(jwk)), publicKey: bytesToB64(spki)};
+  } catch {
+    throw Error('无法通过 P-256 私钥校验');
+  }
+}
+
+export async function publicKeyFingerprint(publicKey) {
+  const hash = await crypto.subtle.digest('SHA-256', b64ToBytes(publicKey));
+  return bytesToHex(new Uint8Array(hash));
+}
+
 function pubFromPem(value) {
   const bytes=pemBytes(value), root=tlv(bytes);
   if(root.length!==1||root[0].tag!==48)throw Error('服务端公钥 DER 无效');
@@ -111,126 +182,55 @@ function pubFromPem(value) {
   if(parts.length!==2||parts[0].tag!==48||bytesToHex(parts[0].value)!==ALGORITHM+CURVE||parts[1].tag!==3||parts[1].value.length!==66||parts[1].value[0]!==0||parts[1].value[1]!==4)throw Error('服务端公钥必须是 P-256 SPKI');
   return bytesToB64(bytes);
 }
-export {pubFromPem};
-export function validateUsqueConfig(cfg) {
-  if(!cfg||typeof cfg!=='object'||Array.isArray(cfg))throw Error('配置应是 JSON 对象');
-  try {privateDer(cfg.private_key);}catch(e){throw Error('private_key: '+e.message);}
-  try {pubFromPem(cfg.endpoint_pub_key);}catch(e){throw Error('服务端公钥: '+e.message);}
-  address(cfg.ipv4,32,ipv4);if(cfg.ipv6)address(cfg.ipv6,128,ipv6);
-  for(const key of ['endpoint_v4','endpoint_v6','endpoint_h2_v4','endpoint_h2_v6'])if(cfg[key]&&!isIP(stripEndpoint(cfg[key])))throw Error(key+' 不是合法 IP');
-  if(!cfg.endpoint_v4&&!cfg.endpoint_v6&&!cfg.endpoint_h2_v4&&!cfg.endpoint_h2_v6)throw Error('缺少 WARP MASQUE Endpoint');
-  return true;
-}
-export async function validateCrypto(cfg) {
-  validateUsqueConfig(cfg);
-  const p=privateDer(cfg.private_key);
-  const algorithm=der(48,concat(b64ToBytes('BgcqhkjOPQIB'),b64ToBytes('BggqhkjOPQMBBw==')));
-  const pkcs=p.pkcs8?p.bytes:der(48,concat(Uint8Array.of(2,1,0),algorithm,der(4,p.bytes)));
+export async function normalizeUsqueConfig(cfg, expectedPublicKey) {
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) throw Error('配置应是 JSON 对象');
+  const deviceKey = await importMasqueKeys(cfg.private_key);
+  if (expectedPublicKey && deviceKey.publicKey !== expectedPublicKey) {
+    throw Error('所输入的私钥与原设备备份不匹配');
+  }
+  let pin;
   try {
-    const key=await crypto.subtle.importKey('pkcs8',pkcs,{name:'ECDSA',namedCurve:'P-256'},true,['sign']);
-    const jwk=await crypto.subtle.exportKey('jwk',key);
-    const publicKey=await crypto.subtle.importKey('jwk',{kty:'EC',crv:'P-256',x:jwk.x,y:jwk.y},{name:'ECDSA',namedCurve:'P-256'},false,['verify']);
-    const challenge=new TextEncoder().encode('warp-config-key-check');
-    const sig=await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key,challenge);
-    if(!await crypto.subtle.verify({name:'ECDSA',hash:'SHA-256'},publicKey,sig,challenge))throw Error();
-    await validatePublicKey(cfg.endpoint_pub_key);
-  } catch {throw Error('密钥校验失败：P-256 私钥、公钥或曲线点无效');}
-}
-export async function validatePublicKey(value){await crypto.subtle.importKey('spki',b64ToBytes(pubFromPem(value)),{name:'ECDSA',namedCurve:'P-256'},false,['verify']);}
-export function normalizeUsqueConfig(cfg) {
-  validateUsqueConfig(cfg);
+    pin = pubFromPem(cfg.endpoint_pub_key);
+    await crypto.subtle.importKey('spki', b64ToBytes(pin), {name: 'ECDSA', namedCurve: 'P-256'}, false, ['verify']);
+  } catch {
+    throw Error('服务端公钥必须是有效的 P-256 SPKI 公钥');
+  }
+  const endpoints = {};
+  for (const key of ['endpoint_v4', 'endpoint_v6', 'endpoint_h2_v4', 'endpoint_h2_v6']) {
+    endpoints[key] = stripEndpoint(cfg[key]);
+    const check = key.endsWith('_v4') ? ipv4 : ipv6;
+    if (endpoints[key] && !check(endpoints[key])) throw Error(key + ' 的 IP 地址无效');
+  }
+  if (!Object.values(endpoints).some(Boolean)) throw Error('缺少 WARP MASQUE Endpoint');
+  if (!endpoints.endpoint_h2_v4 && !endpoints.endpoint_h2_v6) endpoints.endpoint_h2_v4 = H2_DEFAULT;
   return {
-    private_key:bytesToB64(privateDer(cfg.private_key).sec1),
-    endpoint_v4:stripEndpoint(cfg.endpoint_v4),endpoint_v6:stripEndpoint(cfg.endpoint_v6),
-    endpoint_h2_v4:stripEndpoint(cfg.endpoint_h2_v4)||H2_DEFAULT,endpoint_h2_v6:stripEndpoint(cfg.endpoint_h2_v6),
-    endpoint_pub_key:cfg.endpoint_pub_key,id:String(cfg.id||''),access_token:String(cfg.access_token||''),
-    ...(cfg.license?{license:String(cfg.license)}:{}),ipv4:address(cfg.ipv4,32,ipv4),ipv6:cfg.ipv6?address(cfg.ipv6,128,ipv6):''
+    private_key: deviceKey.privateKey,
+    ...endpoints,
+    endpoint_pub_key: '-----BEGIN PUBLIC KEY-----\n' + pin.match(/.{1,64}/g).join('\n') + '\n-----END PUBLIC KEY-----\n',
+    id: String(cfg.id || ''),
+    access_token: String(cfg.access_token || ''),
+    ...(cfg.license ? {license: String(cfg.license)} : {}),
+    ipv4: address(cfg.ipv4, 32, ipv4),
+    ipv6: cfg.ipv6 ? address(cfg.ipv6, 128, ipv6) : ''
   };
 }
-export function buildUsqueFromApi(registerResponse, enrolled, keys) {
-  if(enrolled?.warp_enabled===false) throw Error('设备尚未启用 WARP，请完成登记后重试');
+
+export async function buildUsqueFromApi(registerResponse, enrolled, keys) {
+  if (enrolled?.warp_enabled === false) throw Error('设备尚未启用 WARP，请完成登记后重试');
   const peer = enrolled?.config?.peers?.[0];
-  const address = enrolled?.config?.interface?.addresses;
-  const cfg = {
+  const addresses = enrolled?.config?.interface?.addresses;
+  if (!peer?.endpoint?.v4 && !peer?.endpoint?.v6) throw Error('Cloudflare 未返回 MASQUE 端点，请继续登记');
+  return normalizeUsqueConfig({
     private_key: keys.privateKey,
-    endpoint_v4: stripEndpoint(peer?.endpoint?.v4),
-    endpoint_v6: stripEndpoint(peer?.endpoint?.v6),
-    endpoint_h2_v4: H2_DEFAULT,
-    endpoint_h2_v6: '',
-    endpoint_pub_key: peer?.public_key || '',
-    id: enrolled?.id || registerResponse?.id || '',
-    access_token: registerResponse?.token || '',
-    license: enrolled?.account?.license || registerResponse?.account?.license || '',
-    ipv4: address?.v4 || '',
-    ipv6: address?.v6 || ''
-  };
-  return normalizeUsqueConfig(cfg);
-}
-function validateServer(host) {
-  if (!isIP(host)) throw new Error('端点地址无效');
-  return host;
-}
-export function makeXrayOutbound(config, options = {}) {
-  const cfg = normalizeUsqueConfig(config);
-  const mode = options.mode === 'h3' ? 'h3' : 'h2';
-  const target = options.family==='v6' ? (mode==='h2'?cfg.endpoint_h2_v6:cfg.endpoint_v6) : (mode==='h2'?cfg.endpoint_h2_v4:cfg.endpoint_v4);
-  if(!target&&!options.endpoint)throw Error('此传输未提供 IPv6 端点，请填写已核验的官方端点');
-  const host = validateServer(String(options.endpoint || target || '').trim());
-  const port = Number(options.port ?? 443);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('端口必须为 1~65535');
-  // H2 edge .2 is known to use its own pinned certificate key; H3 pin comes from enrolment.
-  const selectedPin = options.publicKey || (mode === 'h2' && (host === H2_DEFAULT || host === '2606:4700:103::2') ? H2_DEFAULT_PUBLIC_KEY : cfg.endpoint_pub_key);
-  const publicKey = pubFromPem(selectedPin);
-  const addresses = [`${cfg.ipv4}/32`];
-  if (cfg.ipv6) addresses.push(`${cfg.ipv6}/128`);
-  const dns=String(options.dns||'1.1.1.1,1.0.0.1').split(/[,，\s]+/).filter(Boolean);
-  if(!dns.length||dns.some(x=>!isIP(x)))throw Error('隧道 DNS 必须填写合法 IP 地址');
-  const sni = String(options.sni || SNI_DEFAULT).trim();
-  if (!/^[A-Za-z0-9.-]{1,253}$/.test(sni)) throw new Error('SNI 格式无效');
-  return {
-    protocol: 'masque',
-    settings: { address: host, port, remoteDNS:dns },
-    streamSettings: {
-      method: 'masque',
-      masqueSettings: { warp: { privateKey: cfg.private_key, publicKey, address: addresses } },
-      security: 'tls',
-      tlsSettings: { serverName: sni, alpn: [mode] }
-    },
-    tag: 'proxy'
-  };
-}
-export function makeXrayFull(config, options = {}) {
-  const outbound = makeXrayOutbound(config, options);
-  const port=Number(options.localPort??10808);
-  if(!Number.isInteger(port)||port<1024||port>65534)throw Error('本地 SOCKS 端口必须为 1024~65534，HTTP 使用相邻端口');
-  const rules=options.route==='lan-direct'?[{type:'field',ip:['geoip:private'],outboundTag:'direct'}]:[];
-  // Literal private ranges avoid requiring external geoip.dat.
-  if(rules.length)rules[0].ip=['10.0.0.0/8','172.16.0.0/12','192.168.0.0/16','127.0.0.0/8','169.254.0.0/16','::1/128','fc00::/7','fe80::/10'];
-  return {
-    log: { loglevel: 'warning' },
-    inbounds: [
-      { tag: 'socks-in', listen: '127.0.0.1', port, protocol: 'socks', settings: { auth: 'noauth', udp: true } },
-      { tag: 'http-in', listen: '127.0.0.1', port:port+1, protocol: 'http', settings: {} }
-    ],
-    outbounds: [outbound, { protocol: 'freedom', tag: 'direct' }],
-    routing: { domainStrategy: 'AsIs', rules }
-  };
-}
-export function makeSingboxLxOutbound(config, options = {}) {
-  const cfg = normalizeUsqueConfig(config);
-  const mode = options.mode === 'h3' ? 'h3' : 'h2';
-  const xray = makeXrayOutbound(cfg, options);
-  return {
-    type: 'masque', tag: 'warp-masque', profile: 'cloudflare',
-    server: xray.settings.address, server_port: xray.settings.port,
-    vhttp: mode,
-    private_key: cfg.private_key,
-    public_key: xray.streamSettings.masqueSettings.warp.publicKey,
-    ip: `${cfg.ipv4}/32`,
-    ...(cfg.ipv6 ? { ipv6: `${cfg.ipv6}/128` } : {}),
-    mtu: 1280,
-    tls: { enabled: true, server_name: xray.streamSettings.tlsSettings.serverName }
-  };
+    endpoint_v4: peer.endpoint.v4,
+    endpoint_v6: peer.endpoint.v6,
+    endpoint_pub_key: peer.public_key,
+    id: enrolled.id || registerResponse.id,
+    access_token: registerResponse.token,
+    license: enrolled.account?.license || registerResponse.account?.license,
+    ipv4: addresses?.v4,
+    ipv6: addresses?.v6
+  }, keys.publicKey);
 }
 export const prettyJson = obj => JSON.stringify(obj, null, 2) + '\n';
 

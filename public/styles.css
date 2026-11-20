@@ -115,3 +115,5 @@ footer a { color:#83afe0 }
 .advanced-export { margin-top:20px }
 .advanced-export summary { cursor:pointer; font-size:14px; font-weight:650 }
 .advanced-export>summary + .two-fields { margin-top:20px }
+
+#privateFingerprint { overflow-wrap: anywhere; }

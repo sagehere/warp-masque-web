@@ -18,28 +18,32 @@
         <span class="brand-logo" aria-hidden="true">W</span>
         <span>WARP <strong>MASQUE</strong> <small>WEB</small></span>
       </a>
-      <div class="topright"><span class="version">v0.3.0</span><span class="online" id="apiStatus">正在检查服务</span></div>
+      <div class="topright"><span class="version">v0.4.0</span><span class="online" id="apiStatus">正在检查服务</span></div>
     </header>
 
     <main>
       <section class="hero">
         <div class="eyebrow"><span class="ping"></span> Cloudflare WARP · MASQUE / CONNECT-IP</div>
         <h1>用 WARP+ 密钥生成<br><span class="gradient-text">MASQUE 配置</span></h1>
-        <p>粘贴许可证，下载可导入 v2rayN 的 Xray JSON。设备私钥在浏览器中生成。</p>
+        <p>使用 WARP+ 许可证或已有 MASQUE 私钥生成 usque 配置。</p>
       </section>
 
-      <div class="section-head"><div><h2>准备你的设备凭据</h2></div><span class="section-help">只有注册操作需要连接后端</span></div>
+      <div class="section-head"><div><h2>准备你的设备凭据</h2></div><span class="section-help">配置导入在浏览器中完成</span></div>
       <section class="workspace">
         <div class="tabs" role="tablist" aria-label="创建方式">
           <button class="tab active" id="tabRegister" type="button" role="tab" aria-selected="true">WARP+ 密钥</button>
+          <button class="tab" id="tabPrivate" type="button" role="tab" aria-selected="false">使用已有私钥</button>
           <button class="tab" id="tabImport" type="button" role="tab" aria-selected="false">导入 usque 配置</button>
         </div>
-        <div class="pane" id="registerPane" role="tabpanel" aria-labelledby="tabRegister">
-          <p id="httpsNotice" hidden>当前通过 HTTP 打开。请使用此服务器的 HTTPS 地址访问，以解锁并生成配置。</p>
+        <div class="pane" id="accessPane" hidden>
+          <p id="httpsNotice" hidden>当前通过 HTTP 打开。请使用此服务器的 HTTPS 地址访问，以使用密钥校验和生成配置。</p>
           <form id="loginForm" class="access-form" hidden>
             <label class="field">网页访问口令 <input type="password" id="accessCode" maxlength="256" autocomplete="off" spellcheck="false" required></label>
             <button class="secondary" id="loginBtn" type="submit">解锁生成</button>
           </form>
+        </div>
+        <div class="pane" id="registerPane" role="tabpanel" aria-labelledby="tabRegister">
+          <p id="registerUnavailable" hidden>在线登记不可用。可导入原设备备份生成配置。</p>
           <div id="licenseFlow" hidden>
             <label class="field">WARP+ 许可密钥
               <textarea id="licenseInput" rows="2" maxlength="16000" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="xxxxxxxx-xxxxxxxx-xxxxxxxx"></textarea>
@@ -60,13 +64,39 @@
               </div>
             </details>
           </div>
-          <div class="steps" id="registrationSteps" hidden aria-live="polite"></div>
+        </div>
+        <div class="pane" id="privatePane" role="tabpanel" aria-labelledby="tabPrivate" hidden>
+          <label class="field">MASQUE P-256 私钥
+            <textarea id="privateKeyInput" rows="3" maxlength="1048576" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="粘贴 Base64、PEM，或含 MASQUE 私钥的 JSON"></textarea>
+          </label>
+          <div class="action-row"><button type="button" class="secondary" id="privateAnalyzeBtn">校验私钥</button></div>
+          <div id="privateActions" hidden>
+            <p class="hint field-spaced">设备公钥 SHA-256 指纹 <code id="privateFingerprint"></code></p>
+            <details class="advanced">
+              <summary>复用原设备备份</summary>
+              <label class="field field-spaced">原设备 usque JSON
+                <textarea id="privateBackupText" rows="4" maxlength="1048576" autocomplete="off" spellcheck="false"></textarea>
+              </label>
+              <button type="button" class="secondary" id="privateBackupBtn">核对备份并生成</button>
+            </details>
+            <div id="privateEnrollment" hidden>
+              <label class="field field-spaced">WARP+ 许可证（可选）
+                <input id="privateLicense" type="password" maxlength="64" autocomplete="off" spellcheck="false">
+              </label>
+              <button type="button" class="primary" id="privateRegisterBtn">使用这把私钥登记新设备</button>
+              <p class="hint consent-line">登记会创建一台新设备，并提交该私钥对应的公钥。继续即表示接受 <a href="https://www.cloudflare.com/website-terms/" target="_blank" rel="noopener noreferrer">Cloudflare 服务条款</a>。</p>
+            </div>
+          </div>
         </div>
         <div class="pane" id="importPane" role="tabpanel" aria-labelledby="tabImport" hidden>
           <div class="pane-title"><div class="circle-icon">⇧</div><div><h3>复用已有 usque 配置</h3><p>选择本机 <code>config.json</code>，或粘贴 JSON。文件只在当前浏览器中解析，不上传。</p></div></div>
           <label class="upload-area" for="importFile"><span class="upload-symbol">⇪</span><strong>点击选择 config.json 文件</strong><small>仅支持 JSON，最大 1 MB</small><input type="file" id="importFile" accept=".json,application/json"></label>
           <label class="field field-spaced">或粘贴已有配置<textarea id="importText" rows="5" placeholder="{ &quot;private_key&quot;: &quot;...&quot;, &quot;endpoint_pub_key&quot;: &quot;...&quot;, ... }" spellcheck="false"></textarea></label>
           <button type="button" class="secondary" id="importBtn">解析并载入配置</button>
+        </div>
+        <div class="pane" id="progressPane" hidden>
+          <div class="steps" id="registrationSteps" aria-live="polite"></div>
+          <button class="text-button danger" type="button" id="clearPendingBtn" hidden>放弃当前登记</button>
         </div>
       </section>
       <div id="statusMessage" class="status-message" role="status" aria-live="polite" hidden></div>
@@ -80,60 +110,19 @@
         </div>
 
         <div class="action-row">
-          <button type="button" class="primary" id="quickDownloadBtn">↓ 下载 v2rayN 配置</button>
-          <span class="hint">默认使用 HTTP/2 · 本地 SOCKS 端口 10808</span>
+          <button type="button" class="primary" id="downloadBtn">下载 usque 配置</button>
+          <span class="hint">config.json 包含设备私钥和可用的管理凭据，请妥善保管。</span>
         </div>
-        <details class="workspace export-workspace advanced-export" id="exportSettings">
-          <summary>高级导出设置与 usque 备份</summary>
-          <div class="two-fields">
-            <label class="field">目标客户端 / 格式
-              <select id="outputFormat">
-                <option value="xray-full">v2rayN · 完整 Xray 配置（推荐）</option>
-                <option value="xray-outbound">高级 · 单个 Xray 出站</option>
-                <option value="usque">usque · 原生 config.json</option>
-              </select>
-            </label>
-            <label class="field">MASQUE 传输
-              <select id="transport"><option value="h2">HTTP/2 · TCP 443</option><option value="h3">HTTP/3 · QUIC 443</option></select>
-            </label>
-          </div>
-          <div class="two-fields settings-fields">
-            <label class="field">Endpoint 地址 <input type="text" id="endpointInput" autocomplete="off" spellcheck="false"></label>
-            <label class="field">端口 <input type="number" min="1" max="65535" id="portInput" value="443"></label>
-          </div>
-          <div class="two-fields settings-fields">
-            <label class="field">外层连接地址族<select id="family"><option value="v4">IPv4</option><option value="v6">IPv6（需要对应端点）</option></select></label>
-            <label class="field">本地 SOCKS 端口<input id="localPort" type="number" min="1024" max="65534" value="10808"></label>
-          </div>
-          <div class="two-fields settings-fields">
-            <label class="field">完整配置的路由<select id="route"><option value="all">全部经 WARP</option><option value="lan-direct">局域网直连，其余经 WARP</option></select></label>
-            <label class="field">隧道 DNS（逗号分隔）<input id="dns" value="1.1.1.1,1.0.0.1" spellcheck="false"></label>
-          </div>
-          <details class="advanced"><summary>高级选项 · SNI / 公钥固定校验</summary>
-            <div class="field-stack">
-              <label class="field">TLS SNI <input type="text" id="sniInput" value="consumer-masque.cloudflareclient.com" spellcheck="false"></label>
-              <label class="field">覆盖服务端公钥（可选）<textarea rows="3" id="publicKeyOverride" placeholder="仅当更换端点且证书公钥不同、通过可信方式核对后填写" spellcheck="false"></textarea></label>
-            </div>
-          </details>
-          <div class="format-note" id="formatNote">导出单个 Xray 出站 JSON，可在新版 v2rayN 中通过“添加自定义出站服务器”导入。</div>
-          <div class="code-toolbar"><span><span class="code-dot"></span><span id="previewTitle">warp-xray-h2-outbound.json</span></span><label class="reveal"><input type="checkbox" id="revealSecrets">显示私钥</label></div>
-          <pre id="preview" class="preview" tabindex="0">准备配置…</pre>
-          <div class="action-row export-buttons"><button type="button" class="primary" id="downloadBtn">↓ 下载所选配置</button><button type="button" class="secondary" id="copyBtn">复制配置</button><button type="button" class="ghost" id="downloadUsqueBtn">备份 usque 凭据</button></div>
-          <p class="sensitive-note">下载的配置含有可用于连接 WARP 的设备私钥。请本地妥善保存，勿发布在 GitHub、群聊、公开网盘或订阅 URL。</p>
-        </details>
+        <p class="hint field-spaced">连接命令 <code id="connectCommand"></code></p>
       </section>
 
-      <section class="guide-card"><h2>导入 v2rayN，完成连接</h2><ol><li>选择“完整 Xray 配置”，先下载 HTTP/2 版本。</li><li>在 v2rayN 添加自定义配置服务器，导入 JSON，内核选择 Xray。</li><li>将 v2rayN 本地 SOCKS 端口与上方一致，设为活动服务器，开启系统代理。</li><li>通过代理访问 <a href="https://www.cloudflare.com/cdn-cgi/trace" target="_blank" rel="noopener noreferrer">WARP 检测页</a>，确认 warp=on 或 warp=plus。</li></ol><p>核对 WARP+ 出口时，请通过导入后的代理访问检测页。设备的账户权益可在生成时验证，当前网络能否连通由客户端的测试结果确认。</p></section>
-      <section class="help-section"><div class="section-head"><div><h2>常见问题</h2></div></div>
-        <details><summary>为什么网页不能直接打开 VPN？</summary><p>浏览器网页没有系统级 TUN、路由表或网络代理控制权限。本项目的跨平台能力指设备注册与配置生成；实际加密隧道由本机的 Xray、usque 或支持该扩展的客户端连接。</p></details>
-        <details><summary>这和 WireGuard WARP 有什么区别？</summary><p>本工具生成用于 MASQUE CONNECT-IP 的 P-256 私钥与注册设备，不是 wgcf 生成的 Curve25519 WireGuard 配置。请勿混用。</p></details>
-
-        <details><summary>为什么 H2 可用，H3 却失败？</summary><p>通常是本地网络限制了 UDP/443，或 H3/H2 Endpoint 与证书公钥不匹配。先用默认 H2 端点，再调整为已验证的 H3 Endpoint；不能关闭证书校验。</p></details>
-        <details><summary>注册会不会上传我的私钥？</summary><p>不会。P-256 私钥由浏览器生成并留在当前页面内存中。注册阶段必须通过你部署的注册服务 向 Cloudflare 发送临时注册数据、账户访问令牌和设备公钥，因此中转服务会短暂处理这些非私钥的敏感字段；本项目不持久保存。</p></details>
+      <section class="guide-card">
+        <h2>在 usque 中连接</h2>
+        <p>下载 config.json 后，在终端运行结果区显示的命令。将需要连接的应用指向 usque 显示的本机 SOCKS 地址。</p>
       </section>
     </main>
 
-    <footer><span>WARP MASQUE Web · 非官方开源工具，与 Cloudflare 无隶属关系。</span><span><a href="https://github.com/Diniboy1123/usque" target="_blank" rel="noopener noreferrer">usque</a> · <a href="https://xtls.github.io/config/outbounds/masque.html" target="_blank" rel="noopener noreferrer">Xray MASQUE 文档</a></span></footer>
+    <footer><span>WARP MASQUE Web · 非官方开源工具，与 Cloudflare 无隶属关系。</span><span><a href="https://github.com/Diniboy1123/usque" target="_blank" rel="noopener noreferrer">usque</a></span></footer>
   </div>
 </body>
 </html>
