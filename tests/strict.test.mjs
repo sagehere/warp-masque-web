@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {createPrivateKey, createPublicKey, generateKeyPairSync} from 'node:crypto';
 import {
   generateMasqueKeys, importMasqueKeys, normalizeUsqueConfig, isIP, buildUsqueFromApi,
-  parsePrivateKeyInput, convertMasqueOutbound, publicKeyFingerprint
+  parsePrivateKeyInput, convertMasqueOutbound, publicKeyFingerprint,
+  parseWireGuardKey, deriveMasqueKeysFromWireGuard
 } from '../public/lib.mjs';
 
 const pin = 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEIaU7MToJm9NKp8YfGxR6r+/h4mcG7SxI8tsW8OR1A5tv/zCzVbCRRh2t87/kxnP6lAy0lkr7qYwu+ox+k3dr6w==';
@@ -76,4 +77,26 @@ test('从带流量说明的文本识别密钥，保留大小写和输入顺序',
   const second = '9abcdefG-8abcdefH-7abcdefI';
   assert.deepEqual(extractWarpLicenses(`密钥：\n${first}\n(1 GB)\n密钥：\n${second}\n${first}`), [first, second]);
   assert.deepEqual(extractWarpLicenses(`0${first}\n${second}-1234\n${first.slice(1)}`), []);
+});
+
+
+test('WireGuard 私钥与配置行派生同一 P-256 身份并且原私钥不进入 usque 文件', async () => {
+  const raw = Buffer.from(Array.from({length: 32}, (_, index) => index + 1));
+  const base64 = raw.toString('base64');
+  const parsed = parsePrivateKeyInput(`[Interface]\r\nPrivateKey = ${base64} # 示例\r\nAddress = 10.0.0.2/32`);
+  assert.equal(parsed.privateKey, base64);
+  const normalized = parseWireGuardKey(base64);
+  const result = await deriveMasqueKeysFromWireGuard(normalized);
+  assert.equal(await publicKeyFingerprint(result.publicKey), '04582191a95ef60efe7f4a9be4abd9e569963de53f384776dd4ff04295d48602');
+  assert.deepEqual(normalized, Uint8Array.from(raw));
+  raw[0] ^= 7;
+  raw[31] ^= 128;
+  const equivalent = await deriveMasqueKeysFromWireGuard(parseWireGuardKey(raw.toString('base64')));
+  assert.deepEqual(equivalent, result);
+  const config = await normalizeUsqueConfig(fixture(result.privateKey), result.publicKey);
+  assert.ok(!JSON.stringify(config).includes(base64));
+  await assert.rejects(importMasqueKeys(base64), /WireGuard/);
+  assert.throws(() => parseWireGuardKey(Buffer.alloc(32).toString('base64')), /全为零/);
+  assert.throws(() => parsePrivateKeyInput('PrivateKey = invalid'), /32 字节/);
+  assert.throws(() => parsePrivateKeyInput(`PrivateKey = ${base64}\nPrivateKey = ${base64}`), /多把/);
 });

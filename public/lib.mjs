@@ -87,7 +87,7 @@ function tlv(bytes) {
 const CURVE='06082a8648ce3d030107', ALGORITHM='06072a8648ce3d0201';
 function privateDer(value) {
   const bytes = pemBytes(value);
-  if (bytes.length === 32) throw Error('检测到 32 字节密钥。请提供 MASQUE 的 P-256 私钥，WireGuard 密钥无法用于登记。');
+  if (bytes.length === 32) throw Error('该字段要求 P-256 私钥。WireGuard 私钥请在「使用已有私钥」页转换。');
   const root = tlv(bytes);
   if (root.length !== 1 || root[0].tag !== 48) throw Error('P-256 私钥 DER 无效');
   let parts = tlv(root[0].value);
@@ -108,10 +108,51 @@ function privateDer(value) {
   return {bytes, pkcs8};
 }
 
+export function parseWireGuardKey(value) {
+  const encoded = value.replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9+/_-]{43}=?$/.test(encoded)) return null;
+  const key = b64ToBytes(encoded);
+  if (key.length !== 32) return null;
+  if (!key.some(byte => byte !== 0)) throw Error('WireGuard 私钥不能全为零');
+  return key;
+}
+
+export async function deriveMasqueKeysFromWireGuard(wireGuardKey) {
+  // Normalize the scalar as WireGuard's X25519 does before deriving a separate key.
+  const scalar = wireGuardKey.slice();
+  scalar[0] &= 248;
+  scalar[31] = (scalar[31] & 127) | 64;
+  const material = await crypto.subtle.importKey('raw', scalar, 'HKDF', false, ['deriveBits']);
+  const context = new TextEncoder().encode('warp-masque-web/WireGuard-to-P256/v1');
+  const order = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
+  for (let counter = 0; counter < 256; counter++) {
+    const bytes = new Uint8Array(await crypto.subtle.deriveBits({
+      name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(),
+      info: concat(context, Uint8Array.of(counter))
+    }, material, 256));
+    const candidate = BigInt('0x' + bytesToHex(bytes));
+    if (candidate > 0n && candidate < order) {
+      const sec1 = der(48, concat(Uint8Array.of(2, 1, 1), der(4, bytes),
+        der(160, b64ToBytes('BggqhkjOPQMBBw=='))));
+      return importMasqueKeys(bytesToB64(sec1));
+    }
+  }
+  throw Error('无法从这把 WireGuard 私钥派生 P-256 密钥');
+}
+
 export function parsePrivateKeyInput(text) {
   const value = text.trim();
   if (!value) throw Error('请输入 MASQUE 私钥');
-  if (!value.startsWith('{')) return {privateKey: value};
+  if (!value.startsWith('{')) {
+    const entries = [...value.matchAll(/^[\t ]*PrivateKey[\t ]*=[\t ]*([^\s#;]+)/gmi)];
+    if (entries.length > 1) throw Error('WireGuard 配置含有多把私钥，请单独粘贴要使用的一把');
+    if (entries.length === 1) {
+      const privateKey = entries[0][1];
+      if (!parseWireGuardKey(privateKey)) throw Error('WireGuard PrivateKey 应为 32 字节的 Base64');
+      return {privateKey};
+    }
+    return {privateKey: value};
+  }
   let config;
   try { config = JSON.parse(value); }
   catch { throw Error('配置 JSON 格式无效'); }

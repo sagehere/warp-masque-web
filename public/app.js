@@ -1,7 +1,8 @@
 import {
   bytesToHex, randomBytes, cfTimestamp, generateMasqueKeys, generateRegistrationPublicKey,
   buildUsqueFromApi, normalizeUsqueConfig, extractWarpLicenses, prettyJson,
-  parsePrivateKeyInput, convertMasqueOutbound, importMasqueKeys, publicKeyFingerprint
+  parsePrivateKeyInput, parseWireGuardKey, deriveMasqueKeysFromWireGuard,
+  convertMasqueOutbound, importMasqueKeys, publicKeyFingerprint
 } from './lib.mjs';
 
 const $ = id => document.getElementById(id);
@@ -140,7 +141,7 @@ function updateRegistrationControls() {
   const retryText = attempt?.enrolled ? '确认 WARP+ 权益'
     : attempt?.bindingConfirmed ? '继续登记' : '继续生成';
   $('registerBtn').textContent = ready ? '配置已生成' : attempt?.mode === 'plus' ? retryText : '生成配置';
-  $('privateRegisterBtn').textContent = privatePending ? retryText : '使用这把私钥登记新设备';
+  $('privateRegisterBtn').textContent = privatePending ? retryText : '登记设备并生成 usque 配置';
 }
 
 async function registerDevice(mode) {
@@ -267,7 +268,9 @@ function importPasted() {
 function analyzePrivateKey() {
   return localImport(async () => {
     const input = parsePrivateKeyInput($('privateKeyInput').value);
-    const keys = await importMasqueKeys(input.privateKey);
+    const wireGuardKey = input.backup || input.outbound ? null : parseWireGuardKey(input.privateKey);
+    const keys = wireGuardKey ? await deriveMasqueKeysFromWireGuard(wireGuardKey) : await importMasqueKeys(input.privateKey);
+    $('wireGuardNotice').hidden = !wireGuardKey;
     $('privateFingerprint').textContent = await publicKeyFingerprint(keys.publicKey);
     importedKeys = keys;
     renderAccess();
@@ -282,7 +285,8 @@ function analyzePrivateKey() {
       clearPrivateInput();
       return;
     }
-    message('私钥已通过本地校验。请选择复用备份或登记新设备。');
+    message(wireGuardKey ? 'WireGuard 私钥已在本地派生 MASQUE 密钥。'
+      : '私钥已通过本地校验。请选择复用备份或登记新设备。');
   });
 }
 

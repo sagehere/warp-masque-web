@@ -18,14 +18,14 @@
         <span class="brand-logo" aria-hidden="true">W</span>
         <span>WARP <strong>MASQUE</strong> <small>WEB</small></span>
       </a>
-      <div class="topright"><span class="version">v0.4.0</span><span class="online" id="apiStatus">正在检查服务</span></div>
+      <div class="topright"><span class="version">v0.4.1</span><span class="online" id="apiStatus">正在检查服务</span></div>
     </header>
 
     <main>
       <section class="hero">
         <div class="eyebrow"><span class="ping"></span> Cloudflare WARP · MASQUE / CONNECT-IP</div>
         <h1>用 WARP+ 密钥生成<br><span class="gradient-text">MASQUE 配置</span></h1>
-        <p>使用 WARP+ 许可证或已有 MASQUE 私钥生成 usque 配置。</p>
+        <p>使用 WARP+ 许可证、WireGuard 或 MASQUE 私钥生成 usque 配置。</p>
       </section>
 
       <div class="section-head"><div><h2>准备你的设备凭据</h2></div><span class="section-help">配置导入在浏览器中完成</span></div>
@@ -66,11 +66,12 @@
           </div>
         </div>
         <div class="pane" id="privatePane" role="tabpanel" aria-labelledby="tabPrivate" hidden>
-          <label class="field">MASQUE P-256 私钥
-            <textarea id="privateKeyInput" rows="3" maxlength="1048576" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="粘贴 Base64、PEM，或含 MASQUE 私钥的 JSON"></textarea>
+          <label class="field">WireGuard 或 MASQUE 私钥
+            <textarea id="privateKeyInput" rows="3" maxlength="1048576" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="粘贴 WireGuard PrivateKey、MASQUE 私钥或原配置"></textarea>
           </label>
           <div class="action-row"><button type="button" class="secondary" id="privateAnalyzeBtn">校验私钥</button></div>
           <div id="privateActions" hidden>
+            <p class="hint field-spaced" id="wireGuardNotice" hidden>已从 WireGuard 私钥派生 MASQUE 密钥。首次使用请登记新设备。若已登记并保存了 usque 配置，可以在下方复用备份。原 WireGuard 设备的 WARP+ 权益需用许可证另行绑定。</p>
             <p class="hint field-spaced">设备公钥 SHA-256 指纹 <code id="privateFingerprint"></code></p>
             <details class="advanced">
               <summary>复用原设备备份</summary>
@@ -83,7 +84,7 @@
               <label class="field field-spaced">WARP+ 许可证（可选）
                 <input id="privateLicense" type="password" maxlength="64" autocomplete="off" spellcheck="false">
               </label>
-              <button type="button" class="primary" id="privateRegisterBtn">使用这把私钥登记新设备</button>
+              <button type="button" class="primary" id="privateRegisterBtn">登记设备并生成 usque 配置</button>
               <p class="hint consent-line">登记会创建一台新设备，并提交该私钥对应的公钥。继续即表示接受 <a href="https://www.cloudflare.com/website-terms/" target="_blank" rel="noopener noreferrer">Cloudflare 服务条款</a>。</p>
             </div>
           </div>

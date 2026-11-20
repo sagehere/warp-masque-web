@@ -1,4 +1,10 @@
-# v0.4.0 验证记录
+# v0.4.1 验证记录
+
+- Go 竞态检查和 JavaScript 单元测试通过。新增覆盖 WireGuard 纯 Base64、配置中的 `PrivateKey = …`、等效 X25519 标量、P-256 指纹与导出格式。
+- Chromium 手机视口通过 WireGuard 导入、登记重试、usque 备份复用和下载。检查登记请求和下载文件均未包含原 WireGuard 私钥。
+- 用临时生成的 WireGuard 测试密钥派生 P-256 公钥。Cloudflare 的设备注册与 MASQUE 公钥登记均返回 HTTP 200。真实 usque v4.2.1 加载导出的 `config.json` 并启动 SOCKS。当前测试环境的 H3 UDP 出口不可达，未确认实际出网。
+
+## v0.4.0 验证记录
 
 | 检查 | 结果 |
 |---|---|

@@ -1,11 +1,12 @@
-# WARP MASQUE Web v0.4.0
+# WARP MASQUE Web v0.4.1
 
 简体中文网页工具，用于注册或复用 WARP MASQUE 设备并下载 usque 原生 `config.json`。
 
 ## 生成配置
 
 - **使用 WARP+ 许可证**。解锁后粘贴个人 WARP+ 许可证并点击生成。网页会注册设备、绑定许可证、登记公钥并核对 WARP+ 权益。本页可继续未完成的绑定或登记。
-- **使用已有私钥**。接受 P-256 的 SEC1、PKCS#8，支持 Base64 和 PEM。也可粘贴包含 `masqueSettings.warp.privateKey` 的 MASQUE 出站 JSON。字段齐全时，网页按该出站提供的端点、地址和服务端公钥在本地转换。
+- **使用 WireGuard 私钥**。在「使用已有私钥」粘贴 32 字节 Base64 或含 `PrivateKey = …` 的 WireGuard 配置。浏览器用带专用上下文的 HKDF-SHA-256 派生 P-256 私钥。首次用该派生密钥请登记新 MASQUE 设备，并下载 `config.json`。原 WireGuard 设备的 ID、令牌和 WARP+ 权益需要各自的授权凭据。可在登记时填写 WARP+ 许可证，或在重复使用时导入曾生成的 usque 备份。
+- **使用 MASQUE 私钥**。接受 P-256 的 SEC1、PKCS#8，支持 Base64 和 PEM。也可粘贴包含 `masqueSettings.warp.privateKey` 的 MASQUE 出站 JSON。字段齐全时，网页按该出站提供的端点、地址和服务端公钥在本地转换。
 - **复用原设备**。可导入旧 usque JSON，也可先校验私钥，再粘贴原设备的 usque 备份。公钥匹配时沿用备份中的设备信息和管理凭据。
 - **登记新设备**。只有一把私钥时，先校验，再使用其公钥登记新设备。可选填 WARP+ 许可证。Cloudflare 实测会拒绝将已登记的公钥绑定到另一台设备。若遇到此情况，请通过原 usque 备份或字段齐全的 MASQUE 出站复用原设备。
 
